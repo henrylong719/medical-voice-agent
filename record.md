@@ -1,0 +1,73 @@
+1. symptom_specialty_map
+
+```sql
+
+INSERT INTO symptom_specialty_map (specialty_id, symptom, weight, follow_up_questions) VALUES
+    ('a1000000-0000-0000-0000-000000000001', 'chest pain', 1.0,
+     ARRAY['Is the pain sharp or dull?', 'Does it get worse with physical activity?', 'Does the pain radiate to your arm, jaw, or back?']),
+    ('a1000000-0000-0000-0000-000000000001', 'heart palpitations', 0.95,
+     ARRAY['How often do you feel them?', 'Do they happen at rest or during activity?', 'Do you feel dizzy when they occur?']),
+    ('a1000000-0000-0000-0000-000000000001', 'high blood pressure', 0.9,
+     ARRAY['Have you had your blood pressure measured recently?', 'Are you currently on any medication for it?']),
+    ('a1000000-0000-0000-0000-000000000001', 'shortness of breath', 0.7,
+     ARRAY['Does it happen at rest or only during activity?', 'Do you also have chest pain?', 'How long has this been going on?']),
+    ('a1000000-0000-0000-0000-000000000001', 'swollen ankles', 0.6,
+     ARRAY['Is the swelling in both ankles or just one?', 'Does it get worse during the day?', 'Do you also have shortness of breath?']),
+    ('a1000000-0000-0000-0000-000000000001', 'dizziness', 0.4,
+     ARRAY['Do you feel lightheaded or like the room is spinning?', 'Does it happen when you stand up?', 'Have you fainted?']);
+
+-- Neurology
+INSERT INTO symptom_specialty_map (specialty_id, symptom, weight, follow_up_questions) VALUES
+    ('a1000000-0000-0000-0000-000000000002', 'severe headache', 0.9,
+     ARRAY['Where is the pain located?', 'Is it throbbing or constant?', 'Do you see any visual changes like flashing lights?']),
+    ('a1000000-0000-0000-0000-000000000002', 'migraine', 1.0,
+     ARRAY['How often do you get them?', 'Do you experience aura before the headache?', 'What triggers them?']),
+    ('a1000000-0000-0000-0000-000000000002', 'numbness or tingling', 0.85,
+     ARRAY['Where do you feel the numbness?', 'Is it constant or does it come and go?', 'Did it start suddenly?']),
+    ('a1000000-0000-0000-0000-000000000002', 'seizures', 1.0,
+     ARRAY['When was your last seizure?', 'Are you on any seizure medication?', 'How long do they typically last?']),
+    ('a1000000-0000-0000-0000-000000000002', 'memory problems', 0.75,
+     ARRAY['How long have you noticed memory issues?', 'Is it short-term or long-term memory?', 'Has it been getting worse?']),
+    ('a1000000-0000-0000-0000-000000000002', 'tremors', 0.85,
+     ARRAY['Which body part trembles?', 'Does it happen at rest or during movement?', 'When did you first notice it?']);
+
+```
+
+Weight tells the triage system how strongly this symptom points to this specialty. When a patient mentions multiple symptoms, the agent sums up (or averages) the weights to rank which specialty is the best match.
+Follow-up questions are what the agent asks after the patient mentions that symptom, regardless of weight. If a patient says "I'm dizzy," the agent should ask "Do you feel lightheaded or like the room is spinning?" — whether the weight is 0.4 or 1.0.
+They're on the same row because they both belong to the same symptom-specialty pair. Think of each row as answering: "When a patient mentions this symptom, how likely is it to be this specialty (weight), and what should we ask to learn more (follow-up questions)?"
+
+Here's a concrete example of how they'll work together in Phase 2. A patient says "I'm dizzy and I have chest pain":
+
+1. The agent matches "dizziness" → Cardiology (0.4) and "chest pain" → Cardiology (1.0)
+
+2. Combined score for Cardiology: 1.4 — highest match, so recommend Cardiology
+
+3. The agent then asks follow-up questions from both matched rows to gather more detail before confirming the specialty
+
+The weight drives the ranking decision. The follow-up questions drive the conversation. They just happen to live together because they're both properties of a specific symptom-specialty relationship.
+
+---
+
+Q: what if the patient says chest pain and severe headache ?
+
+"Chest pain" matches Cardiology with weight 1.0. "Severe headache" matches Neurology with weight 0.9. So the scores are close — Cardiology 1.0 vs Neurology 0.9. Which specialty should the agent recommend?
+This is where the follow-up questions become critical. Instead of just picking the highest score, the agent should ask follow-up questions from both matches to narrow things down:
+From the chest pain row: "Is the pain sharp or dull?", "Does it radiate to your arm?"
+From the severe headache row: "Do you see flashing lights?", "Is it throbbing or constant?"
+The patient's answers help the agent decide. If they say "the chest pain radiates to my left arm and I feel sweaty" — that's a strong cardiac signal, route to Cardiology. If they say "the chest pain is mild but the headache is blinding with flashing lights" — that sounds more like a migraine, route to Neurology.
+There's also a third possibility: the symptoms might be unrelated, and the patient genuinely needs to see both specialists. The agent could say "Based on your symptoms, I'd recommend booking with Cardiology for the chest pain and Neurology for the headaches. Which would you like to schedule first?"
+
+Right now our schema supports all of this — the data is there. The logic for how to handle it will be built in Phase 2 (simple keyword matching with weight comparison) and then made much smarter in Phase 3 with RAG, where the agent can reason semantically about symptom combinations rather than just adding up weights.
+
+---
+
+Q: we ask follow up questions only when the weights are close or we always ask ?
+
+Option A: Always ask follow-up questions. Every time a symptom is matched, ask the follow-ups. This is the safest approach for a medical context — you gather maximum information. But it makes conversations longer and can feel annoying if the answer is obvious. "I broke my arm playing football" → "What sport were you playing?" feels redundant.
+
+Option B: Only ask when scores are close. If Cardiology scores 1.0 and everything else is below 0.3, just route to Cardiology. But if Cardiology is 1.0 and Neurology is 0.9, ask follow-ups to differentiate. This makes conversations shorter and more natural. The risk is you might miss something — what if the patient said "chest pain" but actually meant heartburn (Gastroenterology)?
+
+Option C: Hybrid — always ask, but adjust how many. If the top specialty is a clear winner (big gap), ask just 1 follow-up to confirm. If scores are close, ask 2–3 follow-ups to differentiate. This balances thoroughness with conversational flow.
+For a medical scheduling agent, I'd recommend Option C. Here's why: in a medical context, even a quick confirmation question adds safety. But you don't want to interrogate someone who clearly knows what they need. A patient saying "I need to see my cardiologist for my annual check-up" doesn't need five follow-up questions.
+The good news is this is a logic decision, not a schema decision. Our data already supports all three approaches — the follow-up questions are stored per symptom, and the agent code in Phase 2 will decide how many to ask based on the score gap.

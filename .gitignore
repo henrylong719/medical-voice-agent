@@ -1,0 +1,58 @@
+# =========================
+# OS / Editor
+# =========================
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# =========================
+# Environment / secrets
+# =========================
+.env
+.env.*
+!.env.example
+
+# =========================
+# Python caches
+# =========================
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# =========================
+# Virtual environments
+# =========================
+.venv/
+venv/
+backend/.venv/
+
+# =========================
+# Coverage / test outputs
+# =========================
+.coverage
+.coverage.*
+htmlcov/
+
+# =========================
+# Build artifacts
+# =========================
+build/
+dist/
+*.egg-info/
+
+# =========================
+# Logs
+# =========================
+*.log
+
+# =========================
+# Optional frontend ignores (future-proof)
+# =========================
+node_modules/
+.next/
+out/
