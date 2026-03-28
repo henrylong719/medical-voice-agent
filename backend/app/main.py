@@ -14,6 +14,7 @@ from app.api.admin.doctor_routes import router as doctor_router
 from app.api.admin.patient_routes import router as patient_router
 from app.api.admin.appointment_routes import router as appointment_router
 from app.api.admin.block_routes import router as block_router
+from app.api.admin.slot_routes import router as slot_router
 
 app = FastAPI(
 	title="Medical Voice Agent API",
@@ -39,6 +40,7 @@ app.include_router(doctor_router, prefix=API_PREFIX)
 app.include_router(patient_router, prefix=API_PREFIX)
 app.include_router(appointment_router, prefix=API_PREFIX)
 app.include_router(block_router, prefix=API_PREFIX)
+app.include_router(slot_router, prefix=API_PREFIX)
 
 
 @app.get("/health")
