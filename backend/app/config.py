@@ -15,7 +15,20 @@ class Settings(BaseSettings):
      # Supabase connection
      supabase_url: str = ""
      supabase_service_key: str = ""
+
+     # Supabase direct Postgres connection — used by PostgresSaver for
+     # persistent conversation memory. Find this in Supabase Dashboard →
+     # Settings → Database → Connection string (URI).
+     supabase_db_uri: str = ""
      
+     # Anthropic (Claude) — used by the LangChain agent
+     anthropic_api_key: str = ""
+
+     # LangSmith observability — traces every LLM call and tool invocation
+     langsmith_api_key: str = ""
+     langsmith_tracing: str = "true"
+     langsmith_project: str = "medical-voice-agent"
+
      # Client scheduling config
      timezone: str = 'America/Chicago'
      scheduling_horizon_days: int = 30          # how far ahead patients can book

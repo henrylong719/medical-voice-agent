@@ -10,6 +10,12 @@ dependencies = [
     "pydantic-settings>=2.0",
     "supabase>=2.0",
     "python-dotenv>=1.0",
+    # Phase 2: Agent framework
+    "langchain>=0.3",
+    "langchain-anthropic>=0.3",
+    "langgraph>=0.2",
+    "langsmith>=0.2",
+    "langgraph-checkpoint-postgres>=2.0",
 ]
 
 [tool.uv]
