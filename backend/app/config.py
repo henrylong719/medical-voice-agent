@@ -3,10 +3,15 @@ Application configuration loaded from environment variables.
  
 Pydantic BaseSettings automatically reads from .env files and validates types.
 If SUPABASE_URL is missing or not a valid URL, the app won't even start —
-you'll get a clear error instead of a mysterious runtime crash later.
+you’ll get a clear error instead of a mysterious runtime crash later.
 """
 
-from pydantic_settings import BaseSettings
+from pathlib import Path
+
+from pydantic_settings import BaseSettings, PydanticBaseSettingsSource
+
+
+ENV_FILE = Path(__file__).resolve().parent.parent / ".env"
 
 
 class Settings(BaseSettings):
@@ -23,6 +28,7 @@ class Settings(BaseSettings):
      
      # Anthropic (Claude) — used by the LangChain agent
      anthropic_api_key: str = ""
+     anthropic_model: str = "claude-haiku-4-5-20251001"
 
      # LangSmith observability — traces every LLM call and tool invocation
      langsmith_api_key: str = ""
@@ -35,10 +41,30 @@ class Settings(BaseSettings):
      default_slot_duration_min: int = 30        # fallback if not specified per doctor
  
      model_config = {
-        "env_file": ".env",                    # load from .env in working directory
+        "env_file": ENV_FILE,                  # load backend/.env regardless of cwd
         "env_file_encoding": "utf-8",
         "case_sensitive": False,               # SUPABASE_URL and supabase_url both work
     }
+
+     @classmethod
+     def settings_customise_sources(
+        cls,
+        settings_cls: type[BaseSettings],
+        init_settings: PydanticBaseSettingsSource,
+        env_settings: PydanticBaseSettingsSource,
+        dotenv_settings: PydanticBaseSettingsSource,
+        file_secret_settings: PydanticBaseSettingsSource,
+     ) -> tuple[PydanticBaseSettingsSource, ...]:
+        """
+        Prefer backend/.env during local development so stale exported shell vars
+        do not silently override the project configuration.
+        """
+        return (
+            init_settings,
+            dotenv_settings,
+            env_settings,
+            file_secret_settings,
+        )
      
      
 # Singleton instance — import this everywhere

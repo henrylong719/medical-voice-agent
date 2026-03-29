@@ -71,3 +71,10 @@ Option B: Only ask when scores are close. If Cardiology scores 1.0 and everythin
 Option C: Hybrid — always ask, but adjust how many. If the top specialty is a clear winner (big gap), ask just 1 follow-up to confirm. If scores are close, ask 2–3 follow-ups to differentiate. This balances thoroughness with conversational flow.
 For a medical scheduling agent, I'd recommend Option C. Here's why: in a medical context, even a quick confirmation question adds safety. But you don't want to interrogate someone who clearly knows what they need. A patient saying "I need to see my cardiologist for my annual check-up" doesn't need five follow-up questions.
 The good news is this is a logic decision, not a schema decision. Our data already supports all three approaches — the follow-up questions are stored per symptom, and the agent code in Phase 2 will decide how many to ask based on the score gap.
+
+Q: how to deal with the situation when the scores are close eventually?
+
+What we have now: The triage tool returns all matching specialties ranked by score. The LLM sees something like "Cardiology: 1.7, Pulmonology: 1.5" and it can reason about it. Because we wrote the system prompt to say "present the specialty recommendation," Claude will typically say something like "Based on your symptoms, I'd recommend either Cardiology or Pulmonology. Cardiology seems most relevant because of the chest pain — does that sound right?" The LLM is naturally good at this kind of ambiguity handling.
+
+So the agent handles it through conversation, not code. It presents the top options, explains why, and lets the patient choose. That's actually the ideal behavior for a scheduling assistant — it shouldn't be making medical decisions silently.
+If you wanted to make this more explicit, you could add a threshold in the triage tool — say, if the top two specialties are within 0.3 of each other, include a flag like "NOTE: Multiple specialties matched closely. Present options to the patient." But honestly, the LLM handles this well without extra logic. And in Phase 3 when we switch to RAG, the confidence signals will be richer anyway.

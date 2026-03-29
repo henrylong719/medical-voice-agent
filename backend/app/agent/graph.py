@@ -18,9 +18,13 @@ from __future__ import annotations
 import logging
 from contextlib import AsyncExitStack
 from typing import Any, AsyncIterator, cast
+from urllib.parse import quote, urlparse, urlunparse
 
 from langchain.agents import create_agent
 from langchain_anthropic import ChatAnthropic
+from pydantic import SecretStr
+from psycopg import AsyncConnection
+from psycopg.rows import dict_row
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 
 from app.agent.prompt import SYSTEM_PROMPT
@@ -28,6 +32,10 @@ from app.agent.tools import ALL_TOOLS
 from app.config import settings
 
 logger = logging.getLogger(__name__)
+
+
+class AgentConfigurationError(RuntimeError):
+    """Raised when required backend settings for the agent are missing."""
 
 
 # ============================================================
@@ -48,16 +56,41 @@ _checkpointer: AsyncPostgresSaver | None = None
 _checkpointer_stack: AsyncExitStack | None = None
 
 
+def _safe_db_uri(uri: str) -> str:
+    """URL-encode the password in a Postgres URI so special chars like % are handled."""
+    parsed = urlparse(uri)
+    if parsed.password:
+        encoded_password = quote(parsed.password, safe="")
+        netloc = f"{parsed.username}:{encoded_password}@{parsed.hostname}"
+        if parsed.port:
+            netloc += f":{parsed.port}"
+        return urlunparse(parsed._replace(netloc=netloc))
+    return uri
+
+
 async def _get_checkpointer() -> AsyncPostgresSaver:
     """Get or create the AsyncPostgresSaver singleton."""
     global _checkpointer, _checkpointer_stack
 
+    db_uri = settings.supabase_db_uri.strip()
+    if not db_uri:
+        raise AgentConfigurationError(
+            "SUPABASE_DB_URI is not configured. Set it in backend/.env before "
+            "using the chat API."
+        )
+
     if _checkpointer is None:
         stack = AsyncExitStack()
         try:
-            checkpointer = await stack.enter_async_context(
-                AsyncPostgresSaver.from_conn_string(settings.supabase_db_uri)
+            conn = await stack.enter_async_context(
+                await AsyncConnection.connect(  
+                    _safe_db_uri(db_uri),
+                    autocommit=True,
+                    prepare_threshold=None,
+                    row_factory=dict_row, 
+                )
             )
+            checkpointer = AsyncPostgresSaver(conn=conn)  
             await checkpointer.setup()
         except Exception:
             await stack.aclose()
@@ -94,8 +127,16 @@ def _build_llm() -> ChatAnthropic:
     a scheduling agent that needs quick responses but doesn't require
     deep reasoning.
     """
+    api_key = settings.anthropic_api_key.strip()
+    if not api_key:
+        raise AgentConfigurationError(
+            "ANTHROPIC_API_KEY is not configured. Set it in backend/.env before "
+            "using the chat API."
+        )
+
     return ChatAnthropic(
-        model_name="claude-haiku-4-5-20241022",
+        model_name=settings.anthropic_model,
+        api_key=SecretStr(api_key),
         temperature=0,
         max_tokens_to_sample=1024,
         timeout=None,
@@ -131,6 +172,11 @@ async def _get_or_build_agent() -> Any:
     if _agent is None:
         _agent = await _get_agent()
     return _agent
+
+
+async def ensure_agent_ready() -> None:
+    """Eagerly validate configuration and initialize the agent singleton."""
+    await _get_or_build_agent()
 
 
 def _extract_text_content(content: Any) -> str:
