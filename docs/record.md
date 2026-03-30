@@ -121,3 +121,29 @@ Chunks too big (Option B): The embedding for a 500-word passage is an average of
 Symptom clusters (Option C): You get the best of both worlds. The "cardiac chest symptoms" chunk is focused enough to embed well, but rich enough to give the LLM context about related symptoms and follow-up questions.
 
 Q: why are we using vector(1536) specifically? What would need to change if we picked a different embedding model?
+
+For our use case — embedding medical symptom descriptions and patient queries — here's what we care about:
+What we need:
+
+Good semantic understanding of medical/health language
+Fast enough for real-time triage (patient is waiting on the phone in later phases)
+Cheap enough that we're not blowing our cost budget (remember, we're targeting $0.03–0.06 per call)
+Reasonable dimensionality (more dimensions = better quality but more storage and slower search)
+
+The main contenders:
+
+OpenAI text-embedding-3-small — 1536 dimensions, very cheap ($0.02 per million tokens), fast, solid general-purpose quality. The "workhorse" option.
+OpenAI text-embedding-3-large — 3072 dimensions, better quality on benchmarks, costs 6.5x more. Overkill for our ~30 chunks.
+Voyage voyage-3 — strong general-purpose model, competitive quality, 1024 dimensions. Good alternative.
+Voyage voyage-clinical-1 — specifically trained on clinical/medical text. Would likely give the best results for our medical symptom matching. But it's a specialized model with more limited availability.
+
+For a learning project with ~30 chunks where we're doing medical symptom matching, text-embedding-3-small is the pragmatic choice: it's cheap, fast, well-documented, and widely used so you'll find plenty of examples and debugging help. The quality difference between it and more expensive models is marginal at our scale.
+That said, if this were a production medical system, I'd seriously evaluate voyage-clinical-1 — domain-specific embedding models can meaningfully outperform general-purpose ones on specialized text. That's a good concept to remember: embedding model selection is a tradeoff between cost, speed, quality, and domain fit.
+One more thing worth noting: text-embedding-3-small actually supports dimension reduction. You can request 512 or 768 dimensions instead of the full 1536, trading some quality for faster search and less storage. We'll stick with 1536 since our dataset is tiny, but it's a lever you'd pull at scale.
+
+Q: Should we completely replace the keyword search, or run both and combine the results (hybrid search)? (triage_symptoms)
+
+Think about it this way — imagine a patient says "I have diabetes." Your keyword-based symptom_specialty_map has an exact entry for "diabetes" → Endocrinology with weight 1.0. That's a perfect, high-confidence match. The semantic search would also match it, but it would return a broader chunk about diabetes, thyroid, and hormonal issues with a similarity score of maybe 0.75.
+For exact keyword hits, the old system is actually more precise. For fuzzy, natural language descriptions like "it feels like an elephant sitting on my chest," semantic search wins by a mile.
+Hybrid search combines both — run the keyword match AND the semantic search, then let the LLM see results from both. This gives you the precision of keywords when they hit, plus the flexibility of semantics when they don't.
+This is a common pattern in production RAG systems. Pure semantic search sounds elegant, but hybrid almost always performs better in practice.
