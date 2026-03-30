@@ -78,3 +78,46 @@ What we have now: The triage tool returns all matching specialties ranked by sco
 
 So the agent handles it through conversation, not code. It presents the top options, explains why, and lets the patient choose. That's actually the ideal behavior for a scheduling assistant — it shouldn't be making medical decisions silently.
 If you wanted to make this more explicit, you could add a threshold in the triage tool — say, if the top two specialties are within 0.3 of each other, include a flag like "NOTE: Multiple specialties matched closely. Present options to the patient." But honestly, the LLM handles this well without extra logic. And in Phase 3 when we switch to RAG, the confidence signals will be richer anyway.
+
+Q: Why would cosine similarity be preferred over Euclidean (L2) distance for comparing text embeddings?
+
+Think about what each metric actually measures. Euclidean distance measures how far apart two points are in space — it cares about both direction and magnitude. Cosine similarity measures the angle between two vectors — it only cares about direction.
+Why does that matter for embeddings? When an embedding model converts "chest tightness" into a 1536-dimensional vector, the direction that vector points encodes the semantic meaning. But the length (magnitude) can vary based on factors like text length, punctuation, or model quirks that have nothing to do with meaning.
+So if "chest tightness" produces a vector pointing in roughly the same direction as "pressure in my chest" but with different magnitudes, cosine similarity says "these mean the same thing" (angle ≈ 0, similarity ≈ 1.0). Euclidean distance might say "these are somewhat far apart" because the points are at different distances from the origin, even though they're semantically identical.
+That said — in practice, most modern embedding models normalize their output vectors to unit length (magnitude = 1), which means L2 distance and cosine similarity become mathematically equivalent. pgvector supports both, and we'll use cosine distance (<=> operator) because it's the conventional choice and works correctly even if you ever swap to a model that doesn't normalize.
+
+Q: Should we chunk by individual symptom (one chunk per symptom), by specialty (one big chunk per specialty covering all its symptoms), or by symptom cluster (groups of related symptoms)?
+
+Right now, your symptom_specialty_map has ~50 rows of short keyword entries. For RAG, we need to replace those with richer text passages that an embedding model can work with. The question is: how do we organize those passages?
+
+Option A: One chunk per symptom (very small chunks)
+Each symptom gets its own rich text passage:
+
+Chunk 1: "Patients experiencing chest tightness, pressure, or squeezing in the chest area, especially during physical activity or emotional stress, may need cardiology evaluation."
+Chunk 2: "Heart palpitations — a racing, fluttering, or pounding heartbeat — can indicate cardiac arrhythmia. May occur at rest or during activity."
+Chunk 3: "Swollen ankles, particularly when accompanied by shortness of breath, may indicate heart failure or other cardiovascular conditions."
+
+You'd end up with ~50 chunks (one for each symptom mapping you already have).
+
+Option B: One chunk per specialty (very large chunks)
+All of Cardiology goes into a single big passage:
+
+Chunk 1 (Cardiology): "The Cardiology department treats conditions of the heart and cardiovascular system. Patients may present with chest tightness, pressure, or squeezing sensations, heart palpitations, high blood pressure, shortness of breath during exertion, swollen ankles, dizziness upon standing... [continues for 500+ words covering every cardiology symptom, when to refer, severity indicators, etc.]"
+
+You'd end up with just ~10 chunks (one per specialty).
+
+Option C: Symptom clusters (medium chunks)
+Group related symptoms that tend to appear together:
+
+Chunk 1 (Cardiac chest symptoms): "Patients experiencing chest tightness, pressure, squeezing, or pain — especially during physical activity or emotional stress — may need cardiology evaluation. Associated symptoms include pain radiating to the left arm, jaw, or back, shortness of breath, and sweating."
+Chunk 2 (Cardiac rhythm symptoms): "Heart palpitations, racing heartbeat, irregular pulse, or a fluttering sensation in the chest may indicate cardiac arrhythmia. These symptoms may occur at rest or during activity and can be accompanied by dizziness or fainting."
+
+You'd end up with maybe 20–30 chunks.
+
+Now here's the tradeoff to think about. When a patient says "I get winded going up stairs," we embed that sentence and find the closest chunks. Consider what happens in each scenario:
+
+Chunks too small (Option A): The retrieval might work well (precise matches), but each chunk has very little context. The LLM gets back "shortness of breath during exertion may need cardiology evaluation" — but it doesn't know about related symptoms it should ask about, like chest pain or swollen ankles.
+Chunks too big (Option B): The embedding for a 500-word passage is an average of everything in it. That Cardiology mega-chunk covers chest pain, palpitations, swollen ankles, dizziness — the embedding gets pulled in many directions. It becomes a "jack of all trades" vector that's moderately close to everything but strongly close to nothing. A patient saying "I get winded going up stairs" might match Pulmonology's mega-chunk just as well as Cardiology's.
+Symptom clusters (Option C): You get the best of both worlds. The "cardiac chest symptoms" chunk is focused enough to embed well, but rich enough to give the LLM context about related symptoms and follow-up questions.
+
+Q: why are we using vector(1536) specifically? What would need to change if we picked a different embedding model?
