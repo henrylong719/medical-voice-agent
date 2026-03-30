@@ -5,11 +5,23 @@ Run with: uvicorn app.main:app --reload
 The --reload flag watches for file changes during development.
 """
 
-
+import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+
+from app.config import settings
+
+# ── LangSmith environment setup ──────────────────────────────
+# LangSmith's SDK reads config from environment variables, not
+# from our Pydantic settings. We push them into os.environ here
+# at import time — before any LangChain modules initialize —
+# so tracing is picked up automatically.
+if settings.langsmith_api_key:
+    os.environ.setdefault("LANGSMITH_API_KEY", settings.langsmith_api_key)
+    os.environ.setdefault("LANGSMITH_TRACING", settings.langsmith_tracing)
+    os.environ.setdefault("LANGSMITH_PROJECT", settings.langsmith_project)
 
 from app.api.admin.specialty_routes import router as specialty_router
 from app.api.admin.doctor_routes import router as doctor_router

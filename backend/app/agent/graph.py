@@ -83,11 +83,11 @@ async def _get_checkpointer() -> AsyncPostgresSaver:
         stack = AsyncExitStack()
         try:
             conn = await stack.enter_async_context(
-                await AsyncConnection.connect(  
+                await AsyncConnection[dict[str, Any]].connect(
                     _safe_db_uri(db_uri),
                     autocommit=True,
                     prepare_threshold=None,
-                    row_factory=dict_row, 
+                    row_factory=dict_row,
                 )
             )
             checkpointer = AsyncPostgresSaver(conn=conn)  

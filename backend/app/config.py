@@ -30,6 +30,9 @@ class Settings(BaseSettings):
      anthropic_api_key: str = ""
      anthropic_model: str = "claude-haiku-4-5-20251001"
 
+     # OpenAI — used only for embeddings (text-embedding-3-small)
+     openai_api_key: str = ""
+
      # LangSmith observability — traces every LLM call and tool invocation
      langsmith_api_key: str = ""
      langsmith_tracing: str = "true"
@@ -70,5 +73,3 @@ class Settings(BaseSettings):
 # Singleton instance — import this everywhere
 # Created once when the module is first imported
 settings = Settings()
-     
-     

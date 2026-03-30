@@ -20,6 +20,7 @@ from pydantic import BaseModel, Field
 from app.supabase_client import supabase
 from app.services.slot_engine import find_slots_for_specialty, find_slots_for_doctor
 from app.services.time_utils import format_for_voice
+from app.services.rag_retriever import retrieve_medical_knowledge
 from app.models.db_rows import (
     CancelAppointmentRow,
     CreatedAppointmentRow,
@@ -60,6 +61,15 @@ class TriageSymptomsInput(BaseModel):
             "Break compound descriptions into separate symptoms. "
             "Example: ['chest pain', 'shortness of breath', 'dizziness']"
         )
+    )
+    description: str = Field(
+        default="",
+        description=(
+            "The patient's full, natural language description of how they feel. "
+            "Keep the original wording as close as possible. "
+            "Example: 'I have been getting sharp pains behind my eyes and I "
+            "sometimes see flashing lights before it starts'"
+        ),
     )
 
 
@@ -193,19 +203,26 @@ def register_patient(uin: str, full_name: str, phone: str | None = None) -> str:
 
 
 @tool(args_schema=TriageSymptomsInput)
-def triage_symptoms(symptoms: list[str]) -> str:
-    """Match patient symptoms to medical specialties using keyword search.
+def triage_symptoms(symptoms: list[str], description: str = "") -> str:
+    """Match patient symptoms to medical specialties using hybrid search.
 
-    Takes a list of symptoms and finds matching specialties ranked by relevance.
-    Also returns follow-up questions to ask the patient for better assessment.
-    Use this after identifying the patient and collecting their symptoms.
+    Combines two search strategies for best results:
+      1. Keyword matching against known symptom-specialty mappings
+      2. Semantic (RAG) search against the medical knowledge base
+
+    Takes a list of individual symptoms AND the patient's natural language
+    description. Use this after identifying the patient and collecting
+    their symptoms.
     """
-    if not symptoms:
+    if not symptoms and not description:
         return "No symptoms provided. Please ask the patient to describe their symptoms."
 
-    # Query symptom_specialty_map for each symptom using keyword matching.
-    # We use ilike for case-insensitive partial matching.
-    # In Phase 3, this gets replaced with semantic (RAG) search.
+    lines: list[str] = []
+
+    # ── Path 1: Keyword matching (precise, high-confidence) ──
+    # Searches symptom_specialty_map using ilike for exact/partial
+    # keyword matches. Works great when patients use clinical terms
+    # like "chest pain" or "migraine."
     all_matches: list[TriageMatchRow] = []
 
     for symptom in symptoms:
@@ -218,60 +235,95 @@ def triage_symptoms(symptoms: list[str]) -> str:
         if result.data:
             all_matches.extend(cast(list[TriageMatchRow], result.data))
 
-    if not all_matches:
+    if all_matches:
+        # Aggregate: group by specialty, sum weights, collect follow-up questions
+        specialty_scores: dict[str, TriageScore] = {}
+
+        for match in all_matches:
+            spec_id = match["specialty_id"]
+            spec_name = match["specialties"]["name"]
+
+            if spec_id not in specialty_scores:
+                specialty_scores[spec_id] = {
+                    "name": spec_name,
+                    "total_weight": 0.0,
+                    "matched_symptoms": [],
+                    "follow_up_questions": [],
+                }
+
+            entry = specialty_scores[spec_id]
+            entry["total_weight"] += float(match["weight"])
+            entry["matched_symptoms"].append(match["symptom"])
+
+            for q in (match.get("follow_up_questions") or []):
+                if q not in entry["follow_up_questions"]:
+                    entry["follow_up_questions"].append(q)
+
+        ranked = sorted(
+            specialty_scores.items(),
+            key=lambda item: item[1]["total_weight"],
+            reverse=True,
+        )
+
+        lines.append("=== Keyword Matches (from symptom database) ===\n")
+        for spec_id, info in ranked:
+            matched = ", ".join(info["matched_symptoms"])
+            lines.append(
+                f"- {info['name']} (ID: {spec_id}): "
+                f"score {info['total_weight']:.2f}, "
+                f"matched on: {matched}"
+            )
+            if info["follow_up_questions"]:
+                top_questions = info["follow_up_questions"][:2]
+                lines.append(f"  Follow-up questions: {'; '.join(top_questions)}")
+
+    # ── Path 2: Semantic search (flexible, handles natural language) ──
+    # Embeds the patient's description and finds similar medical
+    # knowledge chunks via vector similarity. Catches cases like
+    # "elephant sitting on my chest" → Cardiology that keywords miss.
+    semantic_query = description if description else ", ".join(symptoms)
+
+    try:
+        chunks = retrieve_medical_knowledge(
+            query=semantic_query,
+            match_count=3,
+            match_threshold=0.3,
+        )
+    except RuntimeError as e:
+        # If embedding fails (API key missing, network error), fall back
+        # to keyword-only results rather than crashing the whole triage
+        chunks = []
+        lines.append(f"\n(Semantic search unavailable: {e})")
+
+    if chunks:
+        lines.append("\n=== Semantic Matches (from medical knowledge base) ===\n")
+        for chunk in chunks:
+            metadata = chunk["metadata"]
+            specialty_name = metadata.get("specialty_name", "Unknown")
+            specialty_id = metadata.get("specialty_id", "N/A")
+            similarity = chunk["similarity"]
+            category = metadata.get("category", "unknown")
+
+            lines.append(
+                f"- {specialty_name} (ID: {specialty_id}): "
+                f"similarity {similarity:.2f}, "
+                f"category: {category}"
+            )
+            # Include a snippet of the matched content so the LLM can
+            # reason about WHY this specialty was matched
+            content_preview = chunk["content"][:200]
+            lines.append(f"  Context: {content_preview}...")
+
+    # ── Combine results ──────────────────────────────────────
+    if not lines:
         return (
             f"No specialty matches found for symptoms: {', '.join(symptoms)}. "
             "Consider asking the patient to describe their symptoms differently, "
             "or use list_specialties to show available options."
         )
 
-    # Aggregate: group by specialty, sum weights, collect follow-up questions
-    specialty_scores: dict[str, TriageScore] = {}
-
-    for match in all_matches:
-        spec_id = match["specialty_id"]
-        spec_name = match["specialties"]["name"]
-
-        if spec_id not in specialty_scores:
-            specialty_scores[spec_id] = {
-                "name": spec_name,
-                "total_weight": 0.0,
-                "matched_symptoms": [],
-                "follow_up_questions": [],
-            }
-
-        entry = specialty_scores[spec_id]
-        entry["total_weight"] += float(match["weight"])
-        entry["matched_symptoms"].append(match["symptom"])
-
-        # Collect unique follow-up questions
-        for q in (match.get("follow_up_questions") or []):
-            if q not in entry["follow_up_questions"]:
-                entry["follow_up_questions"].append(q)
-
-    # Sort by total weight (highest relevance first)
-    ranked = sorted(
-        specialty_scores.items(),
-        key=lambda item: item[1]["total_weight"],
-        reverse=True,
-    )
-
-    # Format results for the LLM to reason about
-    lines = ["Triage results (ranked by relevance):\n"]
-
-    for spec_id, info in ranked:
-        matched = ", ".join(info["matched_symptoms"])
-        lines.append(
-            f"- {info['name']} (ID: {spec_id}): "
-            f"score {info['total_weight']:.2f}, "
-            f"matched on: {matched}"
-        )
-        if info["follow_up_questions"]:
-            # Include top 2 follow-up questions for the best match
-            top_questions = info["follow_up_questions"][:2]
-            lines.append(f"  Follow-up questions: {'; '.join(top_questions)}")
-
-    return "\n".join(lines)
+    header = "Hybrid triage results — use BOTH keyword and semantic matches to determine the best specialty.\n"
+    return header + "\n".join(lines)
 
 
 @tool(args_schema=FindSlotsInput)
