@@ -147,3 +147,41 @@ Think about it this way — imagine a patient says "I have diabetes." Your keywo
 For exact keyword hits, the old system is actually more precise. For fuzzy, natural language descriptions like "it feels like an elephant sitting on my chest," semantic search wins by a mile.
 Hybrid search combines both — run the keyword match AND the semantic search, then let the LLM see results from both. This gives you the precision of keywords when they hit, plus the flexibility of semantics when they don't.
 This is a common pattern in production RAG systems. Pure semantic search sounds elegant, but hybrid almost always performs better in practice.
+
+Q: Imagine a patient calls in and says "I want to reschedule my cardiology appointment." With your current single-agent setup, the agent has to figure out the right sequence on its own from one big prompt. With the multi-agent supervisor approach, what do you think the sequence of agent handoffs would look like? Which agents would be involved and in what order?
+
+Your steps 1–2 (ask for UIN, look them up) → that's the Intake Agent's job. Steps 3–5 (find the existing appointment, find new slots, book) → that's all the Scheduling Agent.
+But here's the interesting part — notice how the Triage Agent gets skipped entirely. The patient said "reschedule my cardiology appointment" — they already have a specialty, they already have an appointment. No symptom collection needed.
+That's exactly the kind of decision the Supervisor makes. It looks at the state and asks: "Is the patient identified? Do we know what they want? Do we need triage, or can we go straight to scheduling?" In this case:
+
+Supervisor sees patient_id is None → routes to Intake Agent
+Intake Agent collects UIN, identifies patient, hands back to Supervisor
+Supervisor sees patient is identified, intent is "reschedule" (no triage needed) → routes to Scheduling Agent
+Scheduling Agent finds the existing appointment, cancels it, finds new slots, books the new one
+
+For a new booking flow, it would be: Supervisor → Intake → Supervisor → Triage → Supervisor → Scheduling. Triage only enters the picture when there are symptoms to analyze.
+This is why the supervisor earns its keep — it handles the non-linear routing that would be messy to encode in a single prompt.
+
+Q: why the messages needs to read by all agents?
+
+You're right that each agent only cares about the part relevant to its job. The Scheduling Agent doesn't need to deeply understand the symptom discussion that happened during triage. That's what the other state fields are for — specialty_id, patient_id, etc. carry the conclusions forward so agents don't have to re-read the whole history.
+But the agents still need the full message list for two practical reasons:
+Reason 1: Conversational context. The patient is having one continuous conversation. If the Scheduling Agent can't see what was said before, it might re-ask things the patient already answered. Imagine this:
+
+Patient: "I have headaches and my name is Sarah, UIN 123456789"
+Intake Agent handles identification, hands off to Triage
+Triage Agent: "Hi! What symptoms are you experiencing?"
+
+The patient just told us about headaches! If Triage can't see the earlier messages, it asks again and the patient feels like they're talking to a broken system. Remember — from the patient's perspective, they're talking to one agent, not three.
+Reason 2: The LLM needs conversation structure. When we invoke a sub-agent, we're calling an LLM with a system prompt + messages. The LLM needs to see the message history to generate a coherent next response. If you only pass it the last message, it has no context for what's going on.
+
+But here's the nuance you're sensing: each agent's system prompt acts as a filter. The Scheduling Agent sees all messages but its prompt says "you handle scheduling" — so it naturally focuses on the scheduling-relevant parts and ignores the symptom discussion. The state fields (specialty_id, patient_id) are the structured handoff data. The messages are the conversational continuity.
+Think of it like a relay race — the baton (state fields) carries the key data forward, but each runner (agent) can also look back and see the whole track (messages) if they need to understand what happened before them.
+
+## Phase 3
+
+Q: Look at the intent field. The Supervisor sets it by analyzing what the patient said. Can you give me an example of a patient message where the Supervisor would have trouble deciding the intent — where it's ambiguous?
+
+Yes, exactly! "I'd like to chat with you" doesn't signal any of the three intents — they haven't said anything about booking, rescheduling, or cancelling. So intent stays None and the Supervisor would need to ask: "Sure! Are you looking to book a new appointment, reschedule an existing one, or something else?"
+Other ambiguous examples: "I'm not feeling well" (sounds like it could be a booking, but maybe they just want to talk), or "I called last week about my appointment" (reschedule? cancel? just checking details?).
+The None state is essentially the Supervisor saying "I don't have enough information to route yet — I need to ask a follow-up question."

@@ -1,5 +1,4 @@
 
-
 # Phase 2
 
 ---
@@ -29,8 +28,6 @@
 ### Current Challenges
 
 - (none yet)
-
-
 
 # Phase 3
 
@@ -73,8 +70,6 @@
 - Triage uses keyword matching (ilike) — brittle for natural language symptom descriptions
 - Agent sometimes picks Cardiology over Neurology when scores are close (keyword limitation)
 - Agent doesn't always ask for explicit booking confirmation before booking (prompt tuning needed)
-
-
 
 # Phase 4
 
