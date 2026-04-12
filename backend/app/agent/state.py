@@ -28,9 +28,12 @@ class AgentState(TypedDict):
         messages: Full conversation history. Annotated with add_messages
             so LangGraph appends new messages instead of replacing.
         patient_id: UUID of the identified patient. Set by Intake Agent
-            after a successful identify_patient or register_patient call.
+            after a successful patient lookup confirmation or register_patient call.
         patient_name: Patient's full name for personalized responses.
             Set by Intake Agent alongside patient_id.
+        patient_status: Whether the patient says they are new to the
+            clinic or returning. Set by the Supervisor during booking
+            flows so Intake can choose the right verification path.
         symptoms: List of symptoms collected during triage. Set by
             Triage Agent from the triage_symptoms tool call arguments.
         specialty_id: UUID of the matched specialty. Set by Triage Agent
@@ -59,6 +62,7 @@ class AgentState(TypedDict):
     # ── Patient identity (set by Intake Agent) ───────────────
     patient_id: str | None
     patient_name: str | None
+    patient_status: Literal["new", "returning"] | None
 
     # ── Triage results (set by Triage Agent) ─────────────────
     symptoms: list[str]

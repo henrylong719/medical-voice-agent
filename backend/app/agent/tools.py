@@ -12,8 +12,11 @@ tool to call. Better descriptions → better tool selection.
 
 from __future__ import annotations
 
+import json
 import logging
-from typing import cast
+import re
+from datetime import datetime
+from typing import Literal, cast
 
 from langchain_core.tools import tool
 from pydantic import BaseModel, Field
@@ -30,6 +33,7 @@ from app.models.db_rows import (
     CancelAppointmentRow,
     CreatedAppointmentRow,
     FindAppointmentRow,
+    PatientIdentifierRow,
     PatientLookupRow,
     RescheduleAppointmentRow,
     SpecialtyListRow,
@@ -49,15 +53,50 @@ logger = logging.getLogger(__name__)
 # LLM reads them to understand what values to pass.
 # ============================================================
 
-class IdentifyPatientInput(BaseModel):
-    """Input for looking up a patient."""
-    uin: str = Field(description="The patient's 9-digit university ID number (UIN)")
+IdentifierType = Literal["mrn", "passport", "drivers_license", "external_patient_id"]
+
+class FindPatientByIdentifierInput(BaseModel):
+    """Input for patient lookup by a strong identifier."""
+    identifier_type: IdentifierType = Field(
+        description=(
+            "Type of identifier provided by the patient: mrn, passport, "
+            "drivers_license, or external_patient_id"
+        )
+    )
+    identifier_value: str = Field(
+        description="Identifier value exactly as the patient provided it"
+    )
+
+
+class FindPatientsByDemographicsInput(BaseModel):
+    """Input for patient lookup by demographics."""
+    full_name: str = Field(description="Patient's full name")
+    date_of_birth: str = Field(
+        description=(
+            "Patient's date of birth. Accept common formats like "
+            "YYYY-MM-DD, MM-DD-YYYY, MM/DD/YYYY, or month-name dates. "
+            "The backend normalizes this to YYYY-MM-DD."
+        )
+    )
+    phone: str = Field(
+        default="",
+        description=(
+            "Optional phone number to narrow demographic matches. If omitted, "
+            "use an empty string."
+        ),
+    )
 
 
 class RegisterPatientInput(BaseModel):
     """Input for registering a new patient."""
-    uin: str = Field(description="9-digit university ID number")
     full_name: str = Field(description="Patient's full name")
+    date_of_birth: str = Field(
+        description=(
+            "Patient's date of birth. Accept common formats like "
+            "YYYY-MM-DD, MM-DD-YYYY, MM/DD/YYYY, or month-name dates. "
+            "The backend normalizes this to YYYY-MM-DD."
+        )
+    )
     phone: str = Field(
         description=(
             "Patient's phone number. This is required for new patient "
@@ -65,6 +104,10 @@ class RegisterPatientInput(BaseModel):
             "as the patient provides it; do not require a specific format or "
             "area code."
         ),
+    )
+    email: str | None = Field(
+        default=None,
+        description="Optional patient email address, if they provide one",
     )
 
 
@@ -211,81 +254,348 @@ def _coerce_rpc_payload(data: object) -> dict[str, object]:
     return {}
 
 
-@tool(args_schema=IdentifyPatientInput)
-def identify_patient(uin: str) -> str:
-    """Look up a patient by their 9-digit UIN (university ID number).
+def _mask_phone(phone: str | None) -> str | None:
+    """Return only the last four digits of a phone number when possible."""
+    if phone is None:
+        return None
+    digits = "".join(char for char in phone if char.isdigit())
+    if len(digits) >= 4:
+        return digits[-4:]
+    normalized = phone.strip()
+    return normalized or None
 
-    Use this FIRST in every conversation to identify who the patient is.
-    Returns the patient's name, ID, and contact info if found.
-    If the patient is not found, they may need to register as a new patient.
-    """
+
+def _mask_identifier(value: str) -> str:
+    """Mask an identifier value so only the last four characters are exposed."""
+    normalized = value.strip()
+    if len(normalized) <= 4:
+        return normalized
+    return f"{'*' * (len(normalized) - 4)}{normalized[-4:]}"
+
+
+def _normalize_date_of_birth(date_of_birth: str) -> str | None:
+    """Normalize common DOB inputs to ISO YYYY-MM-DD."""
+    normalized = date_of_birth.strip()
+    if not normalized:
+        return None
+
+    cleaned = re.sub(r"\b(\d{1,2})(st|nd|rd|th)\b", r"\1", normalized, flags=re.IGNORECASE)
+    cleaned = cleaned.replace(",", " ")
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+
+    for fmt in (
+        "%Y-%m-%d",
+        "%m-%d-%Y",
+        "%m/%d/%Y",
+        "%m-%d-%y",
+        "%m/%d/%y",
+        "%B %d %Y",
+        "%b %d %Y",
+    ):
+        try:
+            return datetime.strptime(cleaned, fmt).date().isoformat()
+        except ValueError:
+            continue
+
+    return None
+
+
+def _serialize_patient(patient: PatientLookupRow) -> dict[str, object]:
+    """Convert a patient row into a tool-friendly payload."""
+    return {
+        "patient_id": patient["id"],
+        "full_name": patient["full_name"],
+        "date_of_birth": patient["date_of_birth"],
+        "phone_last4": _mask_phone(patient.get("phone")),
+        "email": patient.get("email"),
+        "allergies": patient.get("allergies") or [],
+    }
+
+
+def _json_tool_response(
+    *,
+    status: str,
+    message: str,
+    patient: dict[str, object] | None = None,
+    candidates: list[dict[str, object]] | None = None,
+    lookup_method: str | None = None,
+    matched_identifier: dict[str, object] | None = None,
+) -> str:
+    """Return a structured JSON payload for the LLM and node parser."""
+    payload: dict[str, object] = {
+        "status": status,
+        "message": message,
+    }
+    if patient is not None:
+        payload["patient"] = patient
+    if candidates is not None:
+        payload["candidates"] = candidates
+        payload["match_count"] = len(candidates)
+    if lookup_method is not None:
+        payload["lookup_method"] = lookup_method
+    if matched_identifier is not None:
+        payload["matched_identifier"] = matched_identifier
+    return json.dumps(payload)
+
+
+def _fetch_patient(patient_id: str) -> PatientLookupRow | None:
+    """Fetch a single patient row by UUID."""
     result = (
         supabase.table("patients")
-        .select("id, uin, full_name, phone, email, allergies")
-        .eq("uin", uin)
+        .select("id, full_name, date_of_birth, phone, email, allergies")
+        .eq("id", patient_id)
+        .execute()
+    )
+    if not result.data:
+        return None
+    return cast(list[PatientLookupRow], result.data)[0]
+
+
+@tool(args_schema=FindPatientByIdentifierInput)
+def find_patient_by_identifier(identifier_type: IdentifierType, identifier_value: str) -> str:
+    """Look up a returning patient by a strong identifier.
+
+    Use this as a fallback after demographic lookup could not find a
+    single clear patient. Strong identifiers include MRN, passport
+    number, driver's license number, or another clinic patient number.
+    Returns one of: single_match, multiple_matches, or no_match.
+    """
+    normalized_value = identifier_value.strip()
+    if not normalized_value:
+        return _json_tool_response(
+            status="error",
+            message="Identifier value missing. Ask the patient to repeat it before searching.",
+            lookup_method="identifier",
+        )
+
+    result = (
+        supabase.table("patient_identifiers")
+        .select("patient_id, identifier_type, identifier_value, issuing_country, is_primary")
+        .eq("identifier_type", identifier_type)
+        .eq("identifier_value", normalized_value)
         .execute()
     )
 
     if not result.data:
-        return f"No patient found with UIN {uin}. They may need to register as a new patient."
+        return _json_tool_response(
+            status="no_match",
+            message=(
+                "No patient matched that identifier. If name, date of birth, and "
+                "phone have already been tried, offer registration or staff help "
+                "instead of guessing."
+            ),
+            lookup_method="identifier",
+        )
 
-    patient = cast(list[PatientLookupRow], result.data)[0]
-    allergies = ", ".join(patient.get("allergies") or []) or "None listed"
+    matches = cast(list[PatientIdentifierRow], result.data)
+    patients: list[PatientLookupRow] = []
+    seen_ids: set[str] = set()
+    for match in matches:
+        patient_id = match["patient_id"]
+        if patient_id in seen_ids:
+            continue
+        seen_ids.add(patient_id)
+        patient = _fetch_patient(patient_id)
+        if patient is not None:
+            patients.append(patient)
 
-    return (
-        f"Patient found: {patient['full_name']} "
-        f"(ID: {patient['id']}, UIN: {patient['uin']}). "
-        f"Phone: {patient.get('phone') or 'not on file'}. "
-        f"Allergies: {allergies}."
+    matched_identifier: dict[str, object] = {
+        "identifier_type": identifier_type,
+        "identifier_value_masked": _mask_identifier(normalized_value),
+    }
+    if not patients:
+        return _json_tool_response(
+            status="no_match",
+            message="The identifier exists, but no active patient record was found.",
+            lookup_method="identifier",
+            matched_identifier=matched_identifier,
+        )
+
+    if len(patients) == 1:
+        return _json_tool_response(
+            status="single_match",
+            message=(
+                "One patient matched that identifier. Confirm the patient's name "
+                "and date of birth before proceeding."
+            ),
+            patient=_serialize_patient(patients[0]),
+            lookup_method="identifier",
+            matched_identifier=matched_identifier,
+        )
+
+    return _json_tool_response(
+        status="multiple_matches",
+        message=(
+            "Multiple patient records matched that identifier. Do not guess. "
+            "Hand off to staff for manual verification."
+        ),
+        candidates=[_serialize_patient(patient) for patient in patients],
+        lookup_method="identifier",
+        matched_identifier=matched_identifier,
+    )
+
+
+@tool(args_schema=FindPatientsByDemographicsInput)
+def find_patients_by_demographics(
+    full_name: str,
+    date_of_birth: str,
+    phone: str = "",
+) -> str:
+    """Look up a patient by full name and date of birth.
+
+    Use this as the first lookup step for returning patients.
+    If multiple matches remain, ask for a phone number and search again.
+    Only ask for a stronger identifier if demographics plus phone still
+    cannot isolate one patient record.
+    """
+    normalized_name = full_name.strip()
+    normalized_dob = _normalize_date_of_birth(date_of_birth)
+    normalized_phone = phone.strip()
+
+    if not normalized_name or not normalized_dob:
+        return _json_tool_response(
+            status="error",
+            message=(
+                "Full name and a valid date of birth are both required for "
+                "demographic lookup. If needed, ask the patient to repeat "
+                "their birth date."
+            ),
+            lookup_method="demographics",
+        )
+
+    query = (
+        supabase.table("patients")
+        .select("id, full_name, date_of_birth, phone, email, allergies")
+        .eq("full_name", normalized_name)
+        .eq("date_of_birth", normalized_dob)
+    )
+    if normalized_phone:
+        query = query.eq("phone", normalized_phone)
+
+    result = query.execute()
+    patients = cast(list[PatientLookupRow], result.data or [])
+
+    if not patients:
+        return _json_tool_response(
+            status="no_match",
+            message=(
+                "No patient matched that name and date of birth. Ask for a phone "
+                "number if you do not have one yet. If that still fails, ask for "
+                "a stronger identifier or offer registration if this may be their "
+                "first visit."
+            ),
+            lookup_method="demographics",
+        )
+
+    if len(patients) == 1:
+        return _json_tool_response(
+            status="single_match",
+            message=(
+                "One patient matched those demographics. Confirm the patient's "
+                "name and date of birth before proceeding."
+            ),
+            patient=_serialize_patient(patients[0]),
+            lookup_method="demographics",
+        )
+
+    follow_up = (
+        "Multiple patients matched those demographics even after using the phone "
+        "number. Ask for a stronger identifier such as MRN, passport number, "
+        "driver's license number, or another clinic patient number. Do not guess."
+        if normalized_phone
+        else (
+            "Multiple patients matched those demographics. Ask for a phone number "
+            "first, then try demographics again before asking for a stronger "
+            "identifier."
+        )
+    )
+    return _json_tool_response(
+        status="multiple_matches",
+        message=follow_up,
+        candidates=[_serialize_patient(patient) for patient in patients],
+        lookup_method="demographics",
     )
 
 
 @tool(args_schema=RegisterPatientInput)
 def register_patient(
-    uin: str,
     full_name: str,
+    date_of_birth: str,
     phone: str,
+    email: str | None = None,
 ) -> str:
     """Register a new patient who doesn't exist in the system yet.
 
-    Use this only AFTER identify_patient confirms the patient is not found.
-    Collect the patient's full name and phone number before calling this tool.
+    Use this only after the patient confirms this is their first visit or
+    after lookup confirms there is no matching patient record.
+    Collect the patient's full name, date of birth, and phone number first.
     Accept any non-empty phone number string the patient provides.
     Only call this AFTER reading the phone number back slowly and confirming
     with the patient that it is correct.
     """
-    # Check if UIN already exists
+    normalized_name = full_name.strip()
+    normalized_dob = _normalize_date_of_birth(date_of_birth)
+    normalized_phone = phone.strip()
+    normalized_email = email.strip() if email else None
+
+    if not normalized_name or not normalized_dob:
+        return _json_tool_response(
+            status="error",
+            message=(
+                "Full name and a valid date of birth are required before "
+                "registering a patient."
+            ),
+        )
+
+    if not normalized_phone:
+        return _json_tool_response(
+            status="error",
+            message=(
+                "Phone number missing. Ask the patient for their phone number "
+                "before registering them."
+            ),
+        )
+
     existing = (
         supabase.table("patients")
-        .select("id")
-        .eq("uin", uin)
+        .select("id, full_name, date_of_birth, phone, email, allergies")
+        .eq("full_name", normalized_name)
+        .eq("date_of_birth", normalized_dob)
+        .eq("phone", normalized_phone)
         .execute()
     )
     if existing.data:
-        return f"A patient with UIN {uin} already exists. Use identify_patient to look them up."
-
-    normalized_phone = phone.strip()
-    if not normalized_phone:
-        return (
-            "Phone number missing. Ask the patient for their phone number before "
-            "registering them."
+        patient = cast(list[PatientLookupRow], existing.data)[0]
+        return _json_tool_response(
+            status="already_exists",
+            message=(
+                "A patient with the same name, date of birth, and phone number "
+                "already exists. Use the lookup tools instead of registering again."
+            ),
+            patient=_serialize_patient(patient),
         )
 
     data: dict[str, str] = {
-        "uin": uin,
-        "full_name": full_name,
+        "full_name": normalized_name,
+        "date_of_birth": normalized_dob,
         "phone": normalized_phone,
     }
+    if normalized_email:
+        data["email"] = normalized_email
 
     result = supabase.table("patients").insert(data).execute()
 
     if not result.data:
-        return "Failed to register patient. Please try again."
+        return _json_tool_response(
+            status="error",
+            message="Failed to register patient. Please try again.",
+        )
 
     patient = cast(list[PatientLookupRow], result.data)[0]
-    return (
-        f"Successfully registered {patient['full_name']} "
-        f"(ID: {patient['id']}, UIN: {patient['uin']})."
+    return _json_tool_response(
+        status="registered",
+        message="Patient registered successfully.",
+        patient=_serialize_patient(patient),
     )
 
 
@@ -840,7 +1150,8 @@ def list_specialties() -> str:
 # ============================================================
 
 ALL_TOOLS = [
-    identify_patient,
+    find_patient_by_identifier,
+    find_patients_by_demographics,
     register_patient,
     triage_symptoms,
     find_slots,

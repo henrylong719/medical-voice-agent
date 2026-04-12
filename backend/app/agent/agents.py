@@ -15,6 +15,7 @@ No checkpointer on sub-agents — the outer graph owns persistence.
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import Any
 
@@ -24,7 +25,8 @@ from pydantic import SecretStr
 
 from app.agent.state import AgentState
 from app.agent.tools import (
-    identify_patient,
+    find_patient_by_identifier,
+    find_patients_by_demographics,
     register_patient,
     triage_symptoms,
     list_specialties,
@@ -67,31 +69,43 @@ def _build_llm() -> ChatAnthropic:
 # ============================================================
 
 _INTAKE_PROMPT = """\
-You are the intake assistant at a university medical clinic. Your ONLY job \
-is to identify the patient. The patient has already been greeted — do NOT \
-greet them again.
+You are the intake assistant at a medical clinic. Your ONLY job is to identify \
+or register the patient. The patient has already been greeted — do NOT greet \
+them again.
 
 ## What to do
-1. Ask for their 9-digit UIN (university ID number). Be natural: \
-"To get you set up, could I have your 9-digit university ID number?"
-2. Once they provide it, call identify_patient to look them up.
-3. If found — confirm the name with the patient: "I found Alice Johnson \
-on file — is that you?" Wait for them to confirm. Once confirmed, STOP.
-4. If not found — let them know and ask for their full name and phone number \
-so you can register them. If they only provide one, ask for the missing detail \
-next. Do NOT call register_patient until you have BOTH their full name and \
-phone number. Accept any non-empty phone number string exactly as the patient \
-provides it. Do NOT ask them to repeat it just to add an area code or reformat it. \
-Once they give the phone number, read it back slowly digit by digit and confirm \
-it is correct. Only call register_patient AFTER the patient confirms the phone \
-number is right. After registration, confirm and STOP.
+1. If the patient says this is their first visit or they are a new patient, \
+collect their full name, date of birth, and phone number. If any detail is \
+missing, ask for one missing item at a time. Do NOT call register_patient until \
+you have all three.
+2. Once the patient gives a phone number for registration, read it back slowly \
+and confirm it is correct. Only call register_patient AFTER the patient confirms \
+the phone number is right.
+3. If the patient says they have been seen here before, first collect their full \
+name and date of birth and call find_patients_by_demographics.
+4. If demographic lookup returns a single match, confirm the patient's name and date of \
+birth with them and wait for an explicit yes. Once confirmed, STOP.
+5. If demographic lookup returns multiple matches and you do not have a phone \
+number yet, ask for the phone number and call find_patients_by_demographics \
+again with it.
+6. If demographic lookup still returns multiple matches after using the phone number, \
+ask whether they know an MRN, passport number, driver's license number, or another \
+clinic patient number. If they do, call find_patient_by_identifier.
+7. If demographic lookup returns no match and the patient believes they have been seen \
+here before, ask whether they know an MRN, passport number, driver's license number, \
+or another clinic patient number. If they do, call find_patient_by_identifier.
+8. If a strong identifier also fails to produce a single clear match, explain that you \
+cannot safely verify the record and a staff member will need to help. STOP.
+9. If a returning patient lookup finds no match and they do not know a strong identifier, \
+explain that you could not find an existing record and offer to register them as a new patient.
 
 ## Rules
 - Do NOT greet the patient — they've already been greeted.
-- Always ask for UIN first. Do not ask for their name before trying the UIN.
-- If the patient gives something that is not a 9-digit number, politely ask again.
-- Always collect both the patient's full name and phone number during new registration.
-- Accept any non-empty phone number string the patient gives you.
+- Ask ONE question per response.
+- Do NOT guess which patient record is correct.
+- Start returning-patient lookup with full name and date of birth before asking for stronger identifiers.
+- Always collect full name, date of birth, and phone number during new registration.
+- Accept any non-empty phone number string exactly as the patient provides it.
 - Do NOT require a specific phone number format, length, or area code.
 - Read the phone number back slowly and confirm it before saving.
 - Keep responses to 1-2 sentences.
@@ -99,7 +113,7 @@ number is right. After registration, confirm and STOP.
 """
 
 _TRIAGE_PROMPT = """\
-You are the triage assistant at a university medical clinic. Your ONLY job \
+You are the triage assistant at a medical clinic. Your ONLY job \
 is to match the patient to the right specialty.
 
 ## What to do
@@ -141,7 +155,7 @@ to the nearest ER. Do NOT attempt triage.
 """
 
 _SCHEDULING_PROMPT = """\
-You are the scheduling assistant at a university medical clinic. Your ONLY job \
+You are the scheduling assistant at a medical clinic. Your ONLY job \
 is to help the patient book, reschedule, or cancel appointments.
 
 ## For new bookings — follow this step-by-step flow
@@ -268,24 +282,30 @@ def _message_text(content: object) -> str:
     return ""
 
 
-def _parse_patient_identity(content: str) -> tuple[str, str] | None:
-    """Extract ``(patient_id, patient_name)`` from intake tool output."""
-    if "ID: " not in content or " (" not in content:
+def _parse_patient_payload(content: object) -> dict[str, Any] | None:
+    """Parse a JSON tool payload from Intake tools."""
+    raw = _message_text(content).strip()
+    if not raw.startswith("{"):
+        return None
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+    if isinstance(payload, dict):
+        return payload
+    return None
+
+
+def _patient_identity_from_payload(payload: dict[str, Any]) -> tuple[str, str] | None:
+    """Extract ``(patient_id, patient_name)`` from a structured Intake payload."""
+    patient = payload.get("patient")
+    if not isinstance(patient, dict):
         return None
 
-    for prefix in ("Patient found: ", "Successfully registered "):
-        if prefix not in content:
-            continue
-
-        name_start = content.index(prefix) + len(prefix)
-        name_end = content.index(" (", name_start)
-        id_start = content.index("ID: ") + 4
-        id_end = content.index(",", id_start)
-        return (
-            content[id_start:id_end].strip(),
-            content[name_start:name_end].strip(),
-        )
-
+    patient_id = patient.get("patient_id")
+    patient_name = patient.get("full_name")
+    if isinstance(patient_id, str) and isinstance(patient_name, str):
+        return patient_id, patient_name
     return None
 
 
@@ -305,8 +325,8 @@ def _is_affirmative_identity_reply(content: object) -> bool:
         "not me",
         "wrong person",
         "wrong patient",
-        "wrong uin",
-        "different uin",
+        "wrong record",
+        "different patient",
     )
     if any(marker in normalized for marker in negative_phrases):
         return False
@@ -344,10 +364,10 @@ def _confirmed_patient_from_history(messages: list[Any]) -> tuple[str, str] | No
     for message in reversed(messages[:latest_human_index]):
         if getattr(message, "type", None) != "tool":
             continue
-        content = _message_text(getattr(message, "content", ""))
-        if "Patient found:" not in content:
+        payload = _parse_patient_payload(getattr(message, "content", ""))
+        if payload is None or payload.get("status") != "single_match":
             continue
-        return _parse_patient_identity(content)
+        return _patient_identity_from_payload(payload)
 
     return None
 
@@ -358,7 +378,11 @@ def _get_intake_agent() -> Any:
     if _intake_agent is None:
         _intake_agent = create_agent(
             model=_build_llm(),
-            tools=[identify_patient, register_patient],
+            tools=[
+                find_patient_by_identifier,
+                find_patients_by_demographics,
+                register_patient,
+            ],
             system_prompt=_INTAKE_PROMPT,
         )
     return _intake_agent
@@ -411,15 +435,9 @@ def _get_scheduling_agent() -> Any:
 async def intake_node(state: AgentState) -> dict:
     """Run the Intake Agent and extract patient identity from results.
 
-    After the agent finishes, we scan the ToolMessages to find the
-    patient_id and name so we can set them in shared state.
-
-    Extraction targets:
-      - "Patient found: Sarah (ID: abc-123, UIN: 123456789)"
-      - "Successfully registered Sarah (ID: abc-123, UIN: 123456789)"
-
-    Existing-patient lookups are only committed AFTER the patient confirms
-    "yes, that's me." New registrations are committed immediately.
+    Existing-patient lookups are only committed AFTER the patient explicitly
+    confirms the matched record. New registrations are committed immediately
+    from the structured tool payload.
     """
     agent = _get_intake_agent()
     result = await agent.ainvoke({"messages": state["messages"]})
@@ -439,11 +457,11 @@ async def intake_node(state: AgentState) -> dict:
         if not hasattr(msg, "type") or msg.type != "tool":
             continue
 
-        content = _message_text(msg.content)
-        if "Successfully registered" not in content:
+        payload = _parse_patient_payload(msg.content)
+        if payload is None or payload.get("status") != "registered":
             continue
 
-        parsed_identity = _parse_patient_identity(content)
+        parsed_identity = _patient_identity_from_payload(payload)
         if parsed_identity is None:
             continue
         patient_id, patient_name = parsed_identity

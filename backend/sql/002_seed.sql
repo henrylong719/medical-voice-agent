@@ -309,12 +309,19 @@ INSERT INTO doctor_blocks (doctor_id, start_at, end_at, reason) VALUES
 -- For testing appointment flows.
 -- ============================================================
 
-INSERT INTO patients (id, uin, full_name, phone, email, allergies) VALUES
-    ('aa100000-0000-0000-0000-000000000001', '123456789', 'Alice Johnson',  '555-1001', 'alice.j@university.edu',  ARRAY['penicillin']),
-    ('aa100000-0000-0000-0000-000000000002', '234567890', 'Bob Martinez',   '555-1002', 'bob.m@university.edu',    ARRAY[]::TEXT[]),
-    ('aa100000-0000-0000-0000-000000000003', '345678901', 'Carol Williams', '555-1003', 'carol.w@university.edu',  ARRAY['latex', 'sulfa drugs']),
-    ('aa100000-0000-0000-0000-000000000004', '456789012', 'Dan Brown',      '555-1004', 'dan.b@university.edu',    ARRAY['peanuts']),
-    ('aa100000-0000-0000-0000-000000000005', '567890123', 'Emma Davis',     '555-1005', 'emma.d@university.edu',   ARRAY[]::TEXT[]);
+INSERT INTO patients (id, full_name, date_of_birth, phone, email, allergies) VALUES
+    ('aa100000-0000-0000-0000-000000000001', 'Alice Johnson',  '1992-05-14', '555-1001', 'alice.j@example.com', ARRAY['penicillin']),
+    ('aa100000-0000-0000-0000-000000000002', 'Bob Martinez',   '1989-11-02', '555-1002', 'bob.m@example.com',   ARRAY[]::TEXT[]),
+    ('aa100000-0000-0000-0000-000000000003', 'Carol Williams', '1994-03-21', '555-1003', 'carol.w@example.com', ARRAY['latex', 'sulfa drugs']),
+    ('aa100000-0000-0000-0000-000000000004', 'Dan Brown',      '1985-07-09', '555-1004', 'dan.b@example.com',   ARRAY['peanuts']),
+    ('aa100000-0000-0000-0000-000000000005', 'Emma Davis',     '1990-01-30', '555-1005', 'emma.d@example.com',  ARRAY[]::TEXT[]);
+
+INSERT INTO patient_identifiers (patient_id, identifier_type, identifier_value, is_primary) VALUES
+    ('aa100000-0000-0000-0000-000000000001', 'mrn', 'MRN-1001', TRUE),
+    ('aa100000-0000-0000-0000-000000000002', 'mrn', 'MRN-1002', TRUE),
+    ('aa100000-0000-0000-0000-000000000003', 'passport', 'P1234567', TRUE),
+    ('aa100000-0000-0000-0000-000000000004', 'drivers_license', 'DL-445566', TRUE),
+    ('aa100000-0000-0000-0000-000000000005', 'external_patient_id', 'CLINIC-9005', TRUE);
 
 
 -- ============================================================

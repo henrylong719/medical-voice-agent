@@ -10,13 +10,13 @@ router = APIRouter(prefix="/appointments", tags=["appointments"])
 
 @router.get("")
 def list_appointment(
-	patient_id: str | None = None,
-	doctor_id: str | None = None,
-	status: str | None = None,
+    patient_id: str | None = None,
+    doctor_id: str | None = None,
+    status: str | None = None,
 ):
     """List appointments with optional filters."""
     query = supabase.table("appointments").select(
-        "*, patients(full_name, uin), doctors(full_name), specialties(name)"
+        "*, patients(full_name, date_of_birth, phone), doctors(full_name), specialties(name)"
     )
  
     if patient_id:
@@ -35,7 +35,7 @@ def get_appointment(appointment_id: str):
     """Get a single appointment with full details."""
     result = (
         supabase.table("appointments")
-        .select("*, patients(full_name, uin), doctors(full_name), specialties(name)")
+        .select("*, patients(full_name, date_of_birth, phone), doctors(full_name), specialties(name)")
         .eq("id", appointment_id)
         .execute()
     )

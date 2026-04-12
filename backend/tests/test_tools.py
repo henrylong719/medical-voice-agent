@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
 
 import pytest
@@ -10,7 +11,75 @@ from app.agent import tools
 from tests.support import FakeQuery, FakeSupabase
 
 
-def test_identify_patient_returns_patient_details(monkeypatch: MonkeyPatch) -> None:
+def test_find_patient_by_identifier_returns_patient_details(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    fake_supabase = FakeSupabase(
+        tables={
+            "patient_identifiers": [
+                FakeQuery(
+                    [
+                        {
+                            "patient_id": "patient-1",
+                            "identifier_type": "mrn",
+                            "identifier_value": "MRN-1001",
+                            "issuing_country": None,
+                            "is_primary": True,
+                        }
+                    ]
+                )
+            ],
+            "patients": [
+                FakeQuery(
+                    [
+                        {
+                            "id": "patient-1",
+                            "full_name": "Sarah Connor",
+                            "date_of_birth": "1985-10-26",
+                            "phone": "555-0100",
+                            "email": "sarah@example.com",
+                            "allergies": ["penicillin", "latex"],
+                        }
+                    ]
+                ),
+            ]
+        }
+    )
+    monkeypatch.setattr(tools, "supabase", fake_supabase)
+
+    result = tools.find_patient_by_identifier.invoke(
+        {"identifier_type": "mrn", "identifier_value": "MRN-1001"}
+    )
+    payload = json.loads(result)
+
+    assert payload["status"] == "single_match"
+    assert payload["patient"]["patient_id"] == "patient-1"
+    assert payload["patient"]["full_name"] == "Sarah Connor"
+    assert payload["patient"]["date_of_birth"] == "1985-10-26"
+    assert payload["patient"]["phone_last4"] == "0100"
+    assert payload["matched_identifier"]["identifier_type"] == "mrn"
+    assert payload["matched_identifier"]["identifier_value_masked"].endswith("1001")
+
+
+def test_find_patient_by_identifier_returns_not_found_message(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    fake_supabase = FakeSupabase(tables={"patient_identifiers": [FakeQuery([])]})
+    monkeypatch.setattr(tools, "supabase", fake_supabase)
+
+    result = tools.find_patient_by_identifier.invoke(
+        {"identifier_type": "mrn", "identifier_value": "MRN-404"}
+    )
+    payload = json.loads(result)
+
+    assert payload["status"] == "no_match"
+    assert "No patient matched that identifier" in payload["message"]
+    assert "name, date of birth, and phone" in payload["message"]
+
+
+def test_find_patients_by_demographics_returns_multiple_matches(
+    monkeypatch: MonkeyPatch,
+) -> None:
     fake_supabase = FakeSupabase(
         tables={
             "patients": [
@@ -18,12 +87,20 @@ def test_identify_patient_returns_patient_details(monkeypatch: MonkeyPatch) -> N
                     [
                         {
                             "id": "patient-1",
-                            "uin": "123456789",
-                            "full_name": "Sarah Connor",
+                            "full_name": "Alex Kim",
+                            "date_of_birth": "1990-01-02",
                             "phone": "555-0100",
-                            "email": "sarah@example.com",
-                            "allergies": ["penicillin", "latex"],
-                        }
+                            "email": None,
+                            "allergies": None,
+                        },
+                        {
+                            "id": "patient-2",
+                            "full_name": "Alex Kim",
+                            "date_of_birth": "1990-01-02",
+                            "phone": "555-0101",
+                            "email": None,
+                            "allergies": None,
+                        },
                     ]
                 )
             ]
@@ -31,50 +108,202 @@ def test_identify_patient_returns_patient_details(monkeypatch: MonkeyPatch) -> N
     )
     monkeypatch.setattr(tools, "supabase", fake_supabase)
 
-    result = tools.identify_patient.invoke({"uin": "123456789"})
-
-    assert "Patient found: Sarah Connor" in result
-    assert "ID: patient-1, UIN: 123456789" in result
-    assert "Phone: 555-0100." in result
-    assert "Allergies: penicillin, latex." in result
-
-
-def test_identify_patient_returns_not_found_message(monkeypatch: MonkeyPatch) -> None:
-    fake_supabase = FakeSupabase(tables={"patients": [FakeQuery([])]})
-    monkeypatch.setattr(tools, "supabase", fake_supabase)
-
-    result = tools.identify_patient.invoke({"uin": "123456789"})
-
-    assert result == (
-        "No patient found with UIN 123456789. "
-        "They may need to register as a new patient."
-    )
-
-
-def test_register_patient_rejects_existing_uin(monkeypatch: MonkeyPatch) -> None:
-    fake_supabase = FakeSupabase(
-        tables={"patients": [FakeQuery([{"id": "patient-1"}])]}
-    )
-    monkeypatch.setattr(tools, "supabase", fake_supabase)
-
-    result = tools.register_patient.invoke(
+    result = tools.find_patients_by_demographics.invoke(
         {
-            "uin": "123456789",
+            "full_name": "Alex Kim",
+            "date_of_birth": "1990-01-02",
+        }
+    )
+    payload = json.loads(result)
+
+    assert payload["status"] == "multiple_matches"
+    assert payload["match_count"] == 2
+    assert "Ask for a phone number first" in payload["message"]
+
+
+def test_find_patients_by_demographics_normalizes_mm_dd_yyyy(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    lookup_query = FakeQuery(
+        [
+            {
+                "id": "patient-1",
+                "full_name": "Sarah Connor",
+                "date_of_birth": "1985-10-26",
+                "phone": "555-0100",
+                "email": None,
+                "allergies": None,
+            }
+        ]
+    )
+    fake_supabase = FakeSupabase(tables={"patients": [lookup_query]})
+    monkeypatch.setattr(tools, "supabase", fake_supabase)
+
+    result = tools.find_patients_by_demographics.invoke(
+        {
             "full_name": "Sarah Connor",
+            "date_of_birth": "10-26-1985",
+        }
+    )
+    payload = json.loads(result)
+
+    assert ("eq", ("date_of_birth", "1985-10-26"), {}) in lookup_query.operations
+    assert payload["status"] == "single_match"
+    assert payload["patient"]["date_of_birth"] == "1985-10-26"
+
+
+def test_find_patients_by_demographics_with_phone_still_requires_stronger_identifier(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    fake_supabase = FakeSupabase(
+        tables={
+            "patients": [
+                FakeQuery(
+                    [
+                        {
+                            "id": "patient-1",
+                            "full_name": "Alex Kim",
+                            "date_of_birth": "1990-01-02",
+                            "phone": "555-0100",
+                            "email": None,
+                            "allergies": None,
+                        },
+                        {
+                            "id": "patient-2",
+                            "full_name": "Alex Kim",
+                            "date_of_birth": "1990-01-02",
+                            "phone": "555-0100",
+                            "email": None,
+                            "allergies": None,
+                        },
+                    ]
+                )
+            ]
+        }
+    )
+    monkeypatch.setattr(tools, "supabase", fake_supabase)
+
+    result = tools.find_patients_by_demographics.invoke(
+        {
+            "full_name": "Alex Kim",
+            "date_of_birth": "1990-01-02",
             "phone": "555-0100",
         }
     )
+    payload = json.loads(result)
 
-    assert result == (
-        "A patient with UIN 123456789 already exists. "
-        "Use identify_patient to look them up."
+    assert payload["status"] == "multiple_matches"
+    assert payload["match_count"] == 2
+    assert "Ask for a stronger identifier" in payload["message"]
+    assert "Do not guess" in payload["message"]
+
+
+def test_find_patients_by_demographics_rejects_invalid_birth_date(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    fake_supabase = FakeSupabase(tables={"patients": [FakeQuery([])]})
+    monkeypatch.setattr(tools, "supabase", fake_supabase)
+
+    result = tools.find_patients_by_demographics.invoke(
+        {
+            "full_name": "Sarah Connor",
+            "date_of_birth": "26-26-1985",
+        }
     )
+    payload = json.loads(result)
+
+    assert payload["status"] == "error"
+    assert "valid date of birth" in payload["message"]
+
+
+def test_find_patients_by_demographics_returns_no_match_guidance(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    fake_supabase = FakeSupabase(tables={"patients": [FakeQuery([])]})
+    monkeypatch.setattr(tools, "supabase", fake_supabase)
+
+    result = tools.find_patients_by_demographics.invoke(
+        {
+            "full_name": "Sarah Connor",
+            "date_of_birth": "1985-10-26",
+        }
+    )
+    payload = json.loads(result)
+
+    assert payload["status"] == "no_match"
+    assert "Ask for a phone number" in payload["message"]
+    assert "ask for a stronger identifier or offer registration" in payload["message"]
+
+
+def test_find_patient_by_identifier_returns_multiple_matches_requires_staff_help(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    fake_supabase = FakeSupabase(
+        tables={
+            "patient_identifiers": [
+                FakeQuery(
+                    [
+                        {
+                            "patient_id": "patient-1",
+                            "identifier_type": "mrn",
+                            "identifier_value": "MRN-1001",
+                            "issuing_country": None,
+                            "is_primary": True,
+                        },
+                        {
+                            "patient_id": "patient-2",
+                            "identifier_type": "mrn",
+                            "identifier_value": "MRN-1001",
+                            "issuing_country": None,
+                            "is_primary": True,
+                        },
+                    ]
+                )
+            ],
+            "patients": [
+                FakeQuery(
+                    [
+                        {
+                            "id": "patient-1",
+                            "full_name": "Alex Kim",
+                            "date_of_birth": "1990-01-02",
+                            "phone": "555-0100",
+                            "email": None,
+                            "allergies": None,
+                        }
+                    ]
+                ),
+                FakeQuery(
+                    [
+                        {
+                            "id": "patient-2",
+                            "full_name": "Alex Kim",
+                            "date_of_birth": "1990-01-02",
+                            "phone": "555-0101",
+                            "email": None,
+                            "allergies": None,
+                        }
+                    ]
+                ),
+            ],
+        }
+    )
+    monkeypatch.setattr(tools, "supabase", fake_supabase)
+
+    result = tools.find_patient_by_identifier.invoke(
+        {"identifier_type": "mrn", "identifier_value": "MRN-1001"}
+    )
+    payload = json.loads(result)
+
+    assert payload["status"] == "multiple_matches"
+    assert payload["match_count"] == 2
+    assert "Hand off to staff" in payload["message"]
 
 
 def test_register_patient_requires_phone_argument() -> None:
     with pytest.raises(ValidationError, match="phone"):
         tools.register_patient.invoke(
-            {"uin": "123456789", "full_name": "Sarah Connor"}
+            {"full_name": "Sarah Connor", "date_of_birth": "1985-10-26"}
         )
 
 
@@ -84,16 +313,128 @@ def test_register_patient_rejects_blank_phone(monkeypatch: MonkeyPatch) -> None:
 
     result = tools.register_patient.invoke(
         {
-            "uin": "123456789",
             "full_name": "Sarah Connor",
+            "date_of_birth": "1985-10-26",
             "phone": "   ",
         }
     )
+    payload = json.loads(result)
 
-    assert result == (
-        "Phone number missing. Ask the patient for their phone number before "
-        "registering them."
+    assert payload["status"] == "error"
+    assert "Phone number missing" in payload["message"]
+
+
+def test_register_patient_normalizes_slash_birth_date_before_insert(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    lookup_query = FakeQuery([])
+    insert_query = FakeQuery(
+        [
+            {
+                "id": "patient-2",
+                "full_name": "Sarah Connor",
+                "date_of_birth": "1985-10-26",
+                "phone": "555-0100",
+                "email": None,
+                "allergies": None,
+            }
+        ]
     )
+    fake_supabase = FakeSupabase(tables={"patients": [lookup_query, insert_query]})
+    monkeypatch.setattr(tools, "supabase", fake_supabase)
+
+    result = tools.register_patient.invoke(
+        {
+            "full_name": "Sarah Connor",
+            "date_of_birth": "10/26/1985",
+            "phone": "555-0100",
+        }
+    )
+    payload = json.loads(result)
+
+    assert ("eq", ("date_of_birth", "1985-10-26"), {}) in lookup_query.operations
+    assert insert_query.insert_payloads == [
+        {
+            "full_name": "Sarah Connor",
+            "date_of_birth": "1985-10-26",
+            "phone": "555-0100",
+        }
+    ]
+    assert payload["status"] == "registered"
+
+
+def test_register_patient_normalizes_month_name_birth_date(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    lookup_query = FakeQuery([])
+    insert_query = FakeQuery(
+        [
+            {
+                "id": "patient-2",
+                "full_name": "Sarah Connor",
+                "date_of_birth": "1985-10-26",
+                "phone": "555-0100",
+                "email": None,
+                "allergies": None,
+            }
+        ]
+    )
+    fake_supabase = FakeSupabase(tables={"patients": [lookup_query, insert_query]})
+    monkeypatch.setattr(tools, "supabase", fake_supabase)
+
+    result = tools.register_patient.invoke(
+        {
+            "full_name": "Sarah Connor",
+            "date_of_birth": "October 26, 1985",
+            "phone": "555-0100",
+        }
+    )
+    payload = json.loads(result)
+
+    assert insert_query.insert_payloads == [
+        {
+            "full_name": "Sarah Connor",
+            "date_of_birth": "1985-10-26",
+            "phone": "555-0100",
+        }
+    ]
+    assert payload["status"] == "registered"
+
+
+def test_register_patient_rejects_existing_exact_match(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    fake_supabase = FakeSupabase(
+        tables={
+            "patients": [
+                FakeQuery(
+                    [
+                        {
+                            "id": "patient-1",
+                            "full_name": "Sarah Connor",
+                            "date_of_birth": "1985-10-26",
+                            "phone": "555-0100",
+                            "email": None,
+                            "allergies": None,
+                        }
+                    ]
+                )
+            ]
+        }
+    )
+    monkeypatch.setattr(tools, "supabase", fake_supabase)
+
+    result = tools.register_patient.invoke(
+        {
+            "full_name": "Sarah Connor",
+            "date_of_birth": "1985-10-26",
+            "phone": "555-0100",
+        }
+    )
+    payload = json.loads(result)
+
+    assert payload["status"] == "already_exists"
+    assert payload["patient"]["patient_id"] == "patient-1"
 
 
 def test_register_patient_inserts_phone_when_provided(
@@ -104,8 +445,8 @@ def test_register_patient_inserts_phone_when_provided(
         [
             {
                 "id": "patient-2",
-                "uin": "123456789",
                 "full_name": "Sarah Connor",
+                "date_of_birth": "1985-10-26",
                 "phone": "555-0100",
                 "email": None,
                 "allergies": None,
@@ -119,23 +460,22 @@ def test_register_patient_inserts_phone_when_provided(
 
     result = tools.register_patient.invoke(
         {
-            "uin": "123456789",
             "full_name": "Sarah Connor",
+            "date_of_birth": "1985-10-26",
             "phone": "555-0100",
         }
     )
+    payload = json.loads(result)
 
     assert insert_query.insert_payloads == [
         {
-            "uin": "123456789",
             "full_name": "Sarah Connor",
+            "date_of_birth": "1985-10-26",
             "phone": "555-0100",
         }
     ]
-    assert result == (
-        "Successfully registered Sarah Connor "
-        "(ID: patient-2, UIN: 123456789)."
-    )
+    assert payload["status"] == "registered"
+    assert payload["patient"]["patient_id"] == "patient-2"
 
 
 def test_register_patient_accepts_any_non_empty_phone_string(
@@ -146,8 +486,8 @@ def test_register_patient_accepts_any_non_empty_phone_string(
         [
             {
                 "id": "patient-2",
-                "uin": "123456789",
                 "full_name": "Sarah Connor",
+                "date_of_birth": "1985-10-26",
                 "phone": "1234",
                 "email": None,
                 "allergies": None,
@@ -161,23 +501,22 @@ def test_register_patient_accepts_any_non_empty_phone_string(
 
     result = tools.register_patient.invoke(
         {
-            "uin": "123456789",
             "full_name": "Sarah Connor",
+            "date_of_birth": "1985-10-26",
             "phone": "1234",
         }
     )
+    payload = json.loads(result)
 
     assert insert_query.insert_payloads == [
         {
-            "uin": "123456789",
             "full_name": "Sarah Connor",
+            "date_of_birth": "1985-10-26",
             "phone": "1234",
         }
     ]
-    assert result == (
-        "Successfully registered Sarah Connor "
-        "(ID: patient-2, UIN: 123456789)."
-    )
+    assert payload["status"] == "registered"
+    assert payload["patient"]["phone_last4"] == "1234"
 
 
 def test_triage_symptoms_requires_input() -> None:
@@ -1009,7 +1348,8 @@ def test_list_specialties_returns_empty_message(monkeypatch: MonkeyPatch) -> Non
 
 def test_all_tools_registry_contains_expected_tools() -> None:
     assert [tool.name for tool in tools.ALL_TOOLS] == [
-        "identify_patient",
+        "find_patient_by_identifier",
+        "find_patients_by_demographics",
         "register_patient",
         "triage_symptoms",
         "find_slots",

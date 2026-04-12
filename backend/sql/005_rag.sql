@@ -123,3 +123,9 @@ AS $$
     ORDER BY mk.embedding <=> query_embedding  -- ascending distance = descending similarity
     LIMIT match_count;
 $$;
+
+-- Ensure the backend service_role can ingest chunks and call the RPC
+-- even after a fresh schema reset.
+GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO service_role;
+GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO service_role;
+GRANT ALL PRIVILEGES ON ALL ROUTINES IN SCHEMA public TO service_role;

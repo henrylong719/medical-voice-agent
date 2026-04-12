@@ -121,4 +121,5 @@ def test_validate_slot_selection_rejects_non_template_time(
         end_at="2026-04-13T14:45:00+00:00",
     )
 
+    assert result is not None
     assert "does not match the doctor's current availability" in result

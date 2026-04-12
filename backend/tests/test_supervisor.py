@@ -15,11 +15,12 @@ def _state(**overrides: Any) -> AgentState:
     base: dict[str, Any] = {
         "messages": [
             HumanMessage(content="hi"),
-            AIMessage(content="Hello! Welcome to the university health clinic."),
+            AIMessage(content="Hello! Welcome to the clinic."),
             HumanMessage(content="I need to move my appointment"),
         ],
         "patient_id": "patient-1",
         "patient_name": "Sarah",
+        "patient_status": None,
         "symptoms": [],
         "specialty_id": None,
         "appointment_id": None,
@@ -41,6 +42,7 @@ def test_supervisor_greets_on_first_message() -> None:
                     "messages": [HumanMessage(content="hi")],
                     "patient_id": None,
                     "patient_name": None,
+                    "patient_status": None,
                     "symptoms": [],
                     "specialty_id": None,
                     "appointment_id": None,
@@ -54,7 +56,7 @@ def test_supervisor_greets_on_first_message() -> None:
     )
 
     assert result["current_agent"] == "done"
-    assert "Welcome to the university health clinic" in result["messages"][0].content
+    assert "Welcome to the clinic" in result["messages"][0].content
 
 
 def test_classify_intent_returns_normalized_label(monkeypatch: MonkeyPatch) -> None:
@@ -95,7 +97,49 @@ def test_supervisor_routes_to_intake_when_patient_is_missing() -> None:
     assert result == {"current_agent": "intake"}
 
 
-def test_supervisor_routes_uin_correction_back_to_intake(
+def test_supervisor_asks_if_booking_patient_is_new_or_returning() -> None:
+    result = asyncio.run(
+        supervisor.supervisor_node(
+            _state(
+                patient_id=None,
+                patient_name=None,
+                intent="book",
+                messages=[
+                    HumanMessage(content="hi"),
+                    AIMessage(content="Hello! Welcome to the clinic."),
+                    HumanMessage(content="I'd like to make an appointment"),
+                ],
+            )
+        )
+    )
+
+    assert result["current_agent"] == "done"
+    assert "Have you been seen at this clinic before" in result["messages"][0].content
+
+
+def test_supervisor_routes_to_intake_after_patient_status_is_known() -> None:
+    result = asyncio.run(
+        supervisor.supervisor_node(
+            _state(
+                patient_id=None,
+                patient_name=None,
+                patient_status="returning",
+                intent="book",
+                messages=[
+                    HumanMessage(content="hi"),
+                    AIMessage(content="Hello! Welcome to the clinic."),
+                    HumanMessage(content="I'd like to make an appointment"),
+                    AIMessage(content="Have you been seen at this clinic before, or is this your first visit?"),
+                    HumanMessage(content="yes, I've been there before"),
+                ],
+            )
+        )
+    )
+
+    assert result == {"current_agent": "intake"}
+
+
+def test_supervisor_routes_identity_correction_back_to_intake(
     monkeypatch: MonkeyPatch,
 ) -> None:
     async def fake_classify(state: AgentState) -> str | None:
@@ -111,12 +155,10 @@ def test_supervisor_routes_uin_correction_back_to_intake(
                 selected_appointment_id="appt-1",
                 messages=[
                     HumanMessage(content="hi"),
-                    AIMessage(
-                        content="Hello! Welcome to the university health clinic."
-                    ),
+                    AIMessage(content="Hello! Welcome to the clinic."),
                     HumanMessage(content="I have headaches"),
-                    AIMessage(content="I found Henry Long on file — is that you?"),
-                    HumanMessage(content="no sorry my uin is 123456787"),
+                    AIMessage(content="I found Henry Long born on 1990-01-02 on file — is that you?"),
+                    HumanMessage(content="no sorry that's the wrong patient"),
                 ],
             )
         )
@@ -142,6 +184,7 @@ def test_supervisor_re_runs_after_classifying_intent(monkeypatch: MonkeyPatch) -
 
     assert result == {
         "intent": "book",
+        "patient_status": None,
         "selected_appointment_id": None,
         "current_agent": "supervisor",
         "last_agent": None,
@@ -168,9 +211,10 @@ def test_supervisor_routes_booking_flow_based_on_specialty() -> None:
                 intent="book",
                 messages=[
                     HumanMessage(content="hi"),
-                    AIMessage(content="Hello! Welcome to the university health clinic."),
+                    AIMessage(content="Hello! Welcome to the clinic."),
                     HumanMessage(content="I'd like to make an appointment"),
                 ],
+                patient_status="returning",
             )
         )
     )
@@ -181,7 +225,7 @@ def test_supervisor_routes_booking_flow_based_on_specialty() -> None:
                 specialty_id="spec-cardio",
                 messages=[
                     HumanMessage(content="hi"),
-                    AIMessage(content="Hello! Welcome to the university health clinic."),
+                    AIMessage(content="Hello! Welcome to the clinic."),
                     HumanMessage(content="I'd like to make an appointment"),
                 ],
             )
@@ -199,7 +243,7 @@ def test_supervisor_routes_reschedule_and_cancel_to_scheduling() -> None:
                 intent="reschedule",
                 messages=[
                     HumanMessage(content="hi"),
-                    AIMessage(content="Hello! Welcome to the university health clinic."),
+                    AIMessage(content="Hello! Welcome to the clinic."),
                     HumanMessage(content="I need to move my appointment"),
                 ],
             )
@@ -211,7 +255,7 @@ def test_supervisor_routes_reschedule_and_cancel_to_scheduling() -> None:
                 intent="cancel",
                 messages=[
                     HumanMessage(content="hi"),
-                    AIMessage(content="Hello! Welcome to the university health clinic."),
+                    AIMessage(content="Hello! Welcome to the clinic."),
                     HumanMessage(content="I need to cancel my appointment"),
                 ],
             )
@@ -228,7 +272,7 @@ def test_supervisor_detects_explicit_intent_change_mid_flow() -> None:
         last_agent="triage",
         messages=[
             HumanMessage(content="hi"),
-            AIMessage(content="Hello! Welcome to the university health clinic."),
+            AIMessage(content="Hello! Welcome to the clinic."),
             HumanMessage(content="I'd like to make an appointment"),
             AIMessage(content="Do you have a particular type of specialist in mind?"),
             HumanMessage(content="sorry actually i'd like to reschedule an appointment"),
@@ -241,6 +285,7 @@ def test_supervisor_detects_explicit_intent_change_mid_flow() -> None:
 
     assert result == {
         "intent": "reschedule",
+        "patient_status": None,
         "symptoms": [],
         "specialty_id": None,
         "selected_appointment_id": None,

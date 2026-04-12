@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from typing import Any, cast
 
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
@@ -16,6 +17,7 @@ def _base_state() -> AgentState:
         "messages": [HumanMessage(content="Hello")],
         "patient_id": None,
         "patient_name": None,
+        "patient_status": None,
         "symptoms": [],
         "specialty_id": None,
         "appointment_id": None,
@@ -34,9 +36,19 @@ def test_intake_node_extracts_registered_patient_identity(
     new_messages = state["messages"] + [
         AIMessage(content="I can get that set up for you."),
         ToolMessage(
-            content=(
-                "Successfully registered Sarah Connor "
-                "(ID: patient-1, UIN: 123456789)."
+            content=json.dumps(
+                {
+                    "status": "registered",
+                    "message": "Patient registered successfully.",
+                    "patient": {
+                        "patient_id": "patient-1",
+                        "full_name": "Sarah Connor",
+                        "date_of_birth": "1985-10-26",
+                        "phone_last4": "0100",
+                        "email": None,
+                        "allergies": [],
+                    },
+                }
             ),
             tool_call_id="call-1",
         ),
@@ -59,14 +71,23 @@ def test_intake_node_waits_for_patient_confirmation_before_setting_identity(
     new_messages = state["messages"] + [
         AIMessage(content="Thanks! Let me look that up."),
         ToolMessage(
-            content=(
-                "Patient found: Sarah Connor "
-                "(ID: patient-1, UIN: 123456789). "
-                "Phone: not on file. Allergies: None listed."
+            content=json.dumps(
+                {
+                    "status": "single_match",
+                    "message": "One patient matched those demographics.",
+                    "patient": {
+                        "patient_id": "patient-1",
+                        "full_name": "Sarah Connor",
+                        "date_of_birth": "1985-10-26",
+                        "phone_last4": None,
+                        "email": None,
+                        "allergies": [],
+                    },
+                }
             ),
             tool_call_id="call-1",
         ),
-        AIMessage(content="I found Sarah Connor on file — is that you?"),
+        AIMessage(content="I found Sarah Connor born on 1985-10-26 on file — is that you?"),
     ]
     fake_agent = FakeAsyncAgent({"messages": new_messages})
     monkeypatch.setattr(agents, "_get_intake_agent", lambda: fake_agent)
@@ -85,22 +106,28 @@ def test_intake_node_promotes_lookup_after_patient_confirms(
     state["messages"] = [
         HumanMessage(content="I have headaches"),
         AIMessage(
-            content=(
-                "To get you set up, could I have your 9-digit university "
-                "ID number?"
-            )
+            content="Can you share your full name and date of birth so I can look you up?"
         ),
-        HumanMessage(content="123456789"),
+        HumanMessage(content="Sarah Connor, October 26 1985"),
         AIMessage(content="Thanks! Let me look that up."),
         ToolMessage(
-            content=(
-                "Patient found: Sarah Connor "
-                "(ID: patient-1, UIN: 123456789). "
-                "Phone: not on file. Allergies: None listed."
+            content=json.dumps(
+                {
+                    "status": "single_match",
+                    "message": "One patient matched those demographics.",
+                    "patient": {
+                        "patient_id": "patient-1",
+                        "full_name": "Sarah Connor",
+                        "date_of_birth": "1985-10-26",
+                        "phone_last4": None,
+                        "email": None,
+                        "allergies": [],
+                    },
+                }
             ),
             tool_call_id="call-1",
         ),
-        AIMessage(content="I found Sarah Connor on file — is that you?"),
+        AIMessage(content="I found Sarah Connor born on 1985-10-26 on file — is that you?"),
         HumanMessage(content="yes that's me"),
     ]
     returned_messages = state["messages"] + [
@@ -116,15 +143,130 @@ def test_intake_node_promotes_lookup_after_patient_confirms(
     assert result["patient_name"] == "Sarah Connor"
 
 
+def test_intake_node_keeps_identity_unset_for_multiple_demographic_matches(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    state = _base_state()
+    new_messages = state["messages"] + [
+        AIMessage(content="Let me check our records."),
+        ToolMessage(
+            content=json.dumps(
+                {
+                    "status": "multiple_matches",
+                    "message": (
+                        "Multiple patients matched those demographics. Ask for a phone "
+                        "number first, then try demographics again before asking for "
+                        "a stronger identifier."
+                    ),
+                    "candidates": [
+                        {
+                            "patient_id": "patient-1",
+                            "full_name": "Alex Kim",
+                            "date_of_birth": "1990-01-02",
+                            "phone_last4": "0100",
+                            "email": None,
+                            "allergies": [],
+                        },
+                        {
+                            "patient_id": "patient-2",
+                            "full_name": "Alex Kim",
+                            "date_of_birth": "1990-01-02",
+                            "phone_last4": "0101",
+                            "email": None,
+                            "allergies": [],
+                        },
+                    ],
+                    "match_count": 2,
+                    "lookup_method": "demographics",
+                }
+            ),
+            tool_call_id="call-1",
+        ),
+        AIMessage(content="I found more than one record with that name and date of birth. What phone number do you have on file?"),
+    ]
+    fake_agent = FakeAsyncAgent({"messages": new_messages})
+    monkeypatch.setattr(agents, "_get_intake_agent", lambda: fake_agent)
+
+    result = asyncio.run(agents.intake_node(state))
+
+    assert result["messages"] == new_messages[1:]
+    assert result["patient_id"] is None
+    assert result["patient_name"] is None
+
+
+def test_intake_node_keeps_identity_unset_for_no_match_returning_lookup(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    state = _base_state()
+    new_messages = state["messages"] + [
+        AIMessage(content="Let me check our records."),
+        ToolMessage(
+            content=json.dumps(
+                {
+                    "status": "no_match",
+                    "message": (
+                        "No patient matched that name and date of birth. Ask for a phone "
+                        "number if you do not have one yet. If that still fails, ask for "
+                        "a stronger identifier or offer registration if this may be their "
+                        "first visit."
+                    ),
+                    "lookup_method": "demographics",
+                }
+            ),
+            tool_call_id="call-1",
+        ),
+        AIMessage(content="I couldn’t find a record with that name and date of birth. Do you know your MRN, passport number, driver's license number, or clinic patient number?"),
+    ]
+    fake_agent = FakeAsyncAgent({"messages": new_messages})
+    monkeypatch.setattr(agents, "_get_intake_agent", lambda: fake_agent)
+
+    result = asyncio.run(agents.intake_node(state))
+
+    assert result["messages"] == new_messages[1:]
+    assert result["patient_id"] is None
+    assert result["patient_name"] is None
+
+
 def test_intake_prompt_requires_phone_before_registration() -> None:
-    assert "full name and phone number" in agents._INTAKE_PROMPT
+    assert "full name, date of birth, and phone number" in agents._INTAKE_PROMPT
+    assert "find_patient_by_identifier" in agents._INTAKE_PROMPT
+    assert "find_patients_by_demographics" in agents._INTAKE_PROMPT
     assert (
-        "Do NOT call register_patient until you have BOTH their full name and "
-        "phone number"
+        "If the patient says they have been seen here before, first collect their full "
+        "name and date of birth and call find_patients_by_demographics."
         in agents._INTAKE_PROMPT
     )
     assert (
-        "Always collect both the patient's full name and phone number "
+        "ask for the phone number and call find_patients_by_demographics "
+        "again with it."
+        in agents._INTAKE_PROMPT
+    )
+    assert (
+        "ask whether they know an MRN, passport number, driver's license number"
+        in agents._INTAKE_PROMPT
+    )
+    assert (
+        "If demographic lookup still returns multiple matches after using the phone number"
+        in agents._INTAKE_PROMPT
+    )
+    assert (
+        "If demographic lookup returns no match and the patient believes they have been seen"
+        in agents._INTAKE_PROMPT
+    )
+    assert (
+        "If a strong identifier also fails to produce a single clear match"
+        in agents._INTAKE_PROMPT
+    )
+    assert (
+        "offer to register them as a new patient"
+        in agents._INTAKE_PROMPT
+    )
+    assert (
+        "Do NOT call register_patient until you have all three."
+        in agents._INTAKE_PROMPT
+    )
+    assert (
+        "Always collect full name, date of birth, and phone number "
         "during new registration."
         in agents._INTAKE_PROMPT
     )
@@ -139,6 +281,11 @@ def test_intake_prompt_requires_phone_before_registration() -> None:
         in agents._INTAKE_PROMPT
     )
     assert "Read the phone number back slowly and confirm it before saving." in agents._INTAKE_PROMPT
+    assert "Do NOT guess which patient record is correct." in agents._INTAKE_PROMPT
+    assert (
+        "Start returning-patient lookup with full name and date of birth before asking for stronger identifiers."
+        in agents._INTAKE_PROMPT
+    )
 
 
 def test_triage_node_extracts_specialty_and_symptoms(monkeypatch: MonkeyPatch) -> None:

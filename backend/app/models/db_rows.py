@@ -50,11 +50,21 @@ class TimeRangeRow(TypedDict):
 class PatientLookupRow(TypedDict):
     """Shape for patient lookup queries (identify / register)."""
     id: str
-    uin: str
     full_name: str
+    date_of_birth: str
     phone: str | None
     email: str | None
     allergies: list[str] | None
+
+
+class PatientIdentifierRow(TypedDict):
+    """Shape for patient identifier lookups."""
+
+    patient_id: str
+    identifier_type: str
+    identifier_value: str
+    issuing_country: str | None
+    is_primary: bool
 
 
 class SpecialtyListRow(TypedDict):

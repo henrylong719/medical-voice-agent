@@ -1,14 +1,13 @@
 
 """Admin routes for managing patients."""
- 
+
 from fastapi import APIRouter, HTTPException
- 
+
+from app.models.patient import PatientIdentifierIn, PatientIn, PatientSearchIn
 from app.supabase_client import supabase
-from app.models.patient import PatientIn
- 
- 
+
+
 router = APIRouter(prefix="/patients", tags=["patients"])
- 
 
 
 @router.get("")
@@ -18,16 +17,29 @@ def list_patients():
     return result.data
 
 
-@router.get("/uin/{uin}")
-def get_patient_by_uin(uin: str):
-    """
-    Look up a patient by their 9-digit UIN.
-    This is how the voice agent identifies returning patients.
-    """
+@router.post("/search")
+def search_patients(payload: PatientSearchIn):
+    """Search for patients by demographics."""
+    query = (
+        supabase.table("patients")
+        .select("*")
+        .eq("full_name", payload.full_name)
+        .eq("date_of_birth", payload.date_of_birth)
+    )
+    if payload.phone:
+        query = query.eq("phone", payload.phone)
+
+    result = query.execute()
+    return result.data
+
+
+@router.get("/{patient_id}")
+def get_patient(patient_id: str):
+    """Get a patient by internal UUID."""
     result = (
         supabase.table("patients")
         .select("*")
-        .eq("uin", uin)
+        .eq("id", patient_id)
         .execute()
     )
     if not result.data:
@@ -38,19 +50,32 @@ def get_patient_by_uin(uin: str):
 @router.post("", status_code=201)
 def create_patient(payload: PatientIn):
     """Register a new patient."""
-    # Check if UIN already exists
-    existing = (
-        supabase.table("patients")
-        .select("id")
-        .eq("uin", payload.uin)
-        .execute()
-    )
-    if existing.data:
-        raise HTTPException(status_code=409, detail="Patient with this UIN already exists")
- 
     result = (
         supabase.table("patients")
         .insert(payload.model_dump())
+        .execute()
+    )
+    return result.data[0]
+
+
+@router.post("/{patient_id}/identifiers", status_code=201)
+def add_patient_identifier(patient_id: str, payload: PatientIdentifierIn):
+    """Attach an identifier such as an MRN or passport number."""
+    patient = (
+        supabase.table("patients")
+        .select("id")
+        .eq("id", patient_id)
+        .execute()
+    )
+    if not patient.data:
+        raise HTTPException(status_code=404, detail="Patient not found")
+
+    data = payload.model_dump()
+    data["patient_id"] = patient_id
+
+    result = (
+        supabase.table("patient_identifiers")
+        .insert(data)
         .execute()
     )
     return result.data[0]

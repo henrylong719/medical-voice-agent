@@ -117,20 +117,32 @@ CREATE TABLE doctor_blocks (
 
 -- ============================================================
 -- GROUP 3: Patients
--- Identified by a 9-digit University ID Number (UIN).
+-- Core demographic record plus optional external identifiers.
 -- ============================================================
 
 CREATE TABLE patients (
     id          UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    uin         CHAR(9) NOT NULL UNIQUE,       -- 9-digit university ID, zero-padded
     full_name   TEXT NOT NULL,
+    date_of_birth DATE NOT NULL,
     phone       TEXT,
     email       TEXT,
     allergies   TEXT[] DEFAULT '{}',            -- e.g. {'penicillin', 'peanuts'}
-    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
 
-    -- UIN must be exactly 9 digits
-    CONSTRAINT valid_uin CHECK (uin ~ '^\d{9}$')
+CREATE TABLE patient_identifiers (
+    id               UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    patient_id       UUID NOT NULL REFERENCES patients(id) ON DELETE CASCADE,
+    identifier_type  TEXT NOT NULL,
+    identifier_value TEXT NOT NULL,
+    issuing_country  TEXT,
+    is_primary       BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+
+    CONSTRAINT valid_identifier_type CHECK (
+        identifier_type IN ('mrn', 'passport', 'drivers_license', 'external_patient_id')
+    ),
+    CONSTRAINT unique_patient_identifier UNIQUE (identifier_type, identifier_value)
 );
 
 -- ============================================================
@@ -216,3 +228,22 @@ CREATE TRIGGER set_appointments_updated_at
     BEFORE UPDATE ON appointments
     FOR EACH ROW
     EXECUTE FUNCTION update_updated_at_column();
+
+-- ============================================================
+-- PRIVILEGES FOR BACKEND SERVICE ACCESS
+-- The backend uses the Supabase service_role key. After recreating
+-- the public schema from scratch, we need to grant table/routine
+-- privileges again so PostgREST can read and write these objects.
+-- ============================================================
+
+GRANT USAGE ON SCHEMA public TO service_role;
+GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO service_role;
+GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO service_role;
+GRANT ALL PRIVILEGES ON ALL ROUTINES IN SCHEMA public TO service_role;
+
+ALTER DEFAULT PRIVILEGES IN SCHEMA public
+    GRANT ALL PRIVILEGES ON TABLES TO service_role;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public
+    GRANT ALL PRIVILEGES ON SEQUENCES TO service_role;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public
+    GRANT ALL PRIVILEGES ON ROUTINES TO service_role;
