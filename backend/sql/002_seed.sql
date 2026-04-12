@@ -1,7 +1,7 @@
 -- ============================================================
 -- Medical Voice Agent — Seed Data
 -- Phase 1: Realistic test data for development
--- Run this AFTER schema.sql
+-- Run this AFTER 001_schema.sql
 -- ============================================================
 
 -- ============================================================

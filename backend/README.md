@@ -6,9 +6,11 @@
 
 Go to your Supabase project → SQL Editor and run these in order:
 
-1. `schema.sql` — creates all 9 tables, enums, indexes, and triggers
-2. `seed.sql` — loads specialties, symptom mappings, doctors, patients, sample appointments
-3. `rpc_functions.sql` — creates the `create_doctor_with_details` transactional function
+1. `001_schema.sql` — creates all tables, enums, indexes, triggers, and constraints
+2. `002_seed.sql` — loads specialties, symptom mappings, doctors, patients, sample appointments
+3. `003_create_doctor_with_details.sql` — creates the `create_doctor_with_details` transactional function
+4. `004_finalize_reschedule_appointment.sql` — creates the atomic appointment reschedule RPC
+5. `005_rag.sql` — creates the pgvector/RAG tables and similarity RPC
 
 ### 2. Environment Setup
 
@@ -34,7 +36,19 @@ uv sync
 uv run uvicorn app.main:app --reload
 ```
 
-### 4. Verify
+### 4. Run Tests
+
+```bash
+uv run pytest tests
+```
+
+If you only want to run one file:
+
+```bash
+uv run pytest tests/test_tools.py
+```
+
+### 5. Verify
 
 Open http://localhost:8000/docs for the interactive API docs.
 
@@ -57,9 +71,12 @@ GET  /api/v1/admin/slots/by-specialty?specialty_id=a1000000-0000-0000-0000-00000
 backend/
 ├── .env.example              ← template for environment variables
 ├── pyproject.toml            ← uv project config and dependencies
-├── schema.sql                ← database schema (9 tables)
-├── seed.sql                  ← realistic test data
-├── rpc_functions.sql         ← transactional Postgres functions
+├── sql/
+│   ├── 001_schema.sql
+│   ├── 002_seed.sql
+│   ├── 003_create_doctor_with_details.sql
+│   ├── 004_finalize_reschedule_appointment.sql
+│   └── 005_rag.sql
 └── app/
     ├── main.py               ← FastAPI entry point, router mounting
     ├── config.py             ← Pydantic settings from .env

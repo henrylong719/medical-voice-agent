@@ -146,6 +146,111 @@ def find_slots_for_doctor(
     return [s.to_dict() for s in slots[:max_results]]
 
 
+def validate_slot_selection(
+    doctor_id: str,
+    specialty_id: str,
+    start_at: str,
+    end_at: str,
+    *,
+    exclude_appointment_id: str | None = None,
+) -> str | None:
+    """Validate that a specific slot is still bookable right now."""
+    try:
+        requested_start = datetime.fromisoformat(start_at)
+        requested_end = datetime.fromisoformat(end_at)
+    except ValueError:
+        return (
+            "That appointment time is invalid. Please choose one of the available "
+            "options."
+        )
+
+    if (
+        requested_start.tzinfo is None
+        or requested_start.utcoffset() is None
+        or requested_end.tzinfo is None
+        or requested_end.utcoffset() is None
+    ):
+        return (
+            "That appointment time is invalid. Please choose one of the available "
+            "options."
+        )
+
+    requested_start = requested_start.astimezone(timezone.utc)
+    requested_end = requested_end.astimezone(timezone.utc)
+
+    if requested_end <= requested_start:
+        return (
+            "That appointment time is invalid. Please choose one of the available "
+            "options."
+        )
+
+    now = now_utc()
+    horizon = now + timedelta(days=settings.scheduling_horizon_days)
+    if requested_start <= now or requested_end > horizon:
+        return "That appointment time is no longer bookable. Please choose another slot."
+
+    doctor = _get_doctor(doctor_id)
+    if not doctor:
+        return "That doctor is not available for booking. Please choose another slot."
+
+    specialty = _get_specialty(specialty_id)
+    if not specialty:
+        return "That specialty is not available for booking. Please choose another slot."
+
+    if not _doctor_has_specialty(doctor_id, specialty_id):
+        return (
+            "That doctor is not available for the selected specialty. Please choose "
+            "another slot."
+        )
+
+    local_day = requested_start.astimezone(CLINIC_TZ).date()
+    window_start = datetime.combine(local_day, time.min, tzinfo=CLINIC_TZ).astimezone(
+        timezone.utc
+    )
+    window_end = datetime.combine(
+        local_day + timedelta(days=1),
+        time.min,
+        tzinfo=CLINIC_TZ,
+    ).astimezone(timezone.utc)
+
+    theoretical = _generate_theoretical_slots(
+        doctor_id=doctor_id,
+        doctor_name=doctor["full_name"],
+        specialty_id=specialty_id,
+        specialty_name=specialty["name"],
+        templates=_get_availability_templates(doctor_id),
+        utc_start=window_start,
+        utc_end=window_end,
+        bucket="any",
+    )
+
+    requested_slot = next(
+        (
+            slot
+            for slot in theoretical
+            if slot.start_at == requested_start and slot.end_at == requested_end
+        ),
+        None,
+    )
+    if requested_slot is None:
+        return (
+            "That time does not match the doctor's current availability. Please choose "
+            "one of the offered slots."
+        )
+
+    booked = _get_booked_slots(
+        doctor_id,
+        window_start,
+        window_end,
+        exclude_appointment_id=exclude_appointment_id,
+    )
+    blocks = _get_doctor_blocks(doctor_id, window_start, window_end)
+    if not _subtract_conflicts([requested_slot], booked, blocks):
+        return "That slot is no longer available. Please choose another available time."
+
+    return None
+
+
 # ============================================================
 # CORE ALGORITHM
 # ============================================================
@@ -172,7 +277,8 @@ def _compute_available_slots(
 
     # Determine search window
     day_raw = (preferred_day or "").strip().lower()
-    if day_raw in NEXT_AVAILABLE_ALIASES:
+    if not day_raw or day_raw in NEXT_AVAILABLE_ALIASES:
+        # No preference or "next available" → search the full horizon
         utc_start, utc_end = now, horizon
     else:
         day_range = parse_preferred_day(preferred_day)
@@ -250,6 +356,18 @@ def _get_specialty(specialty_id: str) -> SpecialtyRow | None:
     return rows[0] if rows else None
 
 
+def _doctor_has_specialty(doctor_id: str, specialty_id: str) -> bool:
+    """Return whether an active doctor is linked to the given specialty."""
+    result = (
+        supabase.table("doctor_specialties")
+        .select("doctor_id")
+        .eq("doctor_id", doctor_id)
+        .eq("specialty_id", specialty_id)
+        .execute()
+    )
+    return bool(result.data)
+
+
 def _get_availability_templates(doctor_id: str) -> list[AvailabilityTemplateRow]:
     """Fetch weekly availability templates for a doctor."""
     result = (
@@ -265,22 +383,26 @@ def _get_booked_slots(
     doctor_id: str,
     utc_start: datetime,
     utc_end: datetime,
+    exclude_appointment_id: str | None = None,
 ) -> set[tuple[datetime, datetime]]:
     """
     Fetch booked appointments as a set of (start, end) tuples.
 
     Uses a set for O(1) lookups during conflict checking.
-    Only includes non-cancelled appointments.
+    Only includes non-cancelled appointments that overlap the search window.
     """
-    result = (
+    query = (
         supabase.table("appointments")
         .select("start_at, end_at")
         .eq("doctor_id", doctor_id)
         .neq("status", "cancelled")
-        .gte("start_at", utc_start.isoformat())
         .lt("start_at", utc_end.isoformat())
-        .execute()
+        .gt("end_at", utc_start.isoformat())
     )
+    if exclude_appointment_id:
+        query = query.neq("id", exclude_appointment_id)
+
+    result = query.execute()
     return {
         (
             datetime.fromisoformat(row["start_at"]),

@@ -1,6 +1,6 @@
 -- ============================================================
 -- RPC Functions for atomic multi-step operations
--- Run this in Supabase SQL Editor AFTER schema.sql and seed.sql
+-- Run this in Supabase SQL Editor AFTER 001_schema.sql and 002_seed.sql
 -- ============================================================
 
 -- ============================================================

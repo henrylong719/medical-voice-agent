@@ -1,34 +1,44 @@
 """
-Medical scheduling agent built with LangGraph.
+Multi-agent medical scheduling graph built with LangGraph.
 
-This module creates the agent "graph" — the loop where the LLM:
-  1. Reads the conversation + tool descriptions
-  2. Decides to call a tool or respond to the patient
-  3. If it called a tool, reads the result and loops back to step 1
-  4. If it responded, the loop ends (until the next patient message)
+Replaces the Phase 2 monolithic agent with a Supervisor + 3 sub-agents:
+  - Supervisor: routes to the right sub-agent based on state
+  - Intake Agent: identifies or registers patients
+  - Triage Agent: collects symptoms, matches to specialty via RAG
+  - Scheduling Agent: books, reschedules, cancels appointments
 
-Key components:
-  - ChatAnthropic: the Claude LLM with tools bound
-  - AsyncPostgresSaver: persists conversation history in Supabase Postgres
-  - create_agent: LangChain's agent factory (built on LangGraph)
+The graph loop:
+  Patient message → Supervisor → Sub-agent → Supervisor → ...
+  When waiting for patient input, the graph exits to END.
+
+Graph structure:
+    START → supervisor ←→ intake
+                       ←→ triage
+                       ←→ scheduling
+                       → END (when waiting for patient)
+
+Persistence is handled by AsyncPostgresSaver on the outer graph,
+so conversation state survives across messages and server restarts.
+The sub-agents do NOT have their own checkpointers — they read from
+and write to the shared AgentState.
 """
 
 from __future__ import annotations
 
 import logging
 from contextlib import AsyncExitStack
-from typing import Any, AsyncIterator, cast
+from typing import Any, AsyncIterator
 from urllib.parse import quote, urlparse, urlunparse
 
-from langchain.agents import create_agent
-from langchain_anthropic import ChatAnthropic
-from pydantic import SecretStr
+from langchain_core.messages import AIMessage
+from langgraph.graph import END, START, StateGraph
+from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from psycopg import AsyncConnection
 from psycopg.rows import dict_row
-from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 
-from app.agent.prompt import SYSTEM_PROMPT
-from app.agent.tools import ALL_TOOLS
+from app.agent.agents import intake_node, triage_node, scheduling_node
+from app.agent.state import AgentState
+from app.agent.supervisor import supervisor_node
 from app.config import settings
 
 logger = logging.getLogger(__name__)
@@ -41,15 +51,10 @@ class AgentConfigurationError(RuntimeError):
 # ============================================================
 # CHECKPOINTER (persistent conversation memory)
 # ============================================================
-# AsyncPostgresSaver stores conversation state in your Supabase
-# Postgres database. Each conversation thread gets its own
-# checkpoint, so:
-#   - Conversations survive server restarts
-#   - Multiple server instances share the same memory
-#   - You can inspect conversation state directly in the DB
-#
-# setup() creates the checkpoint tables automatically the first
-# time we initialize the saver.
+# Same pattern as Phase 2 — AsyncPostgresSaver stores conversation
+# state in Supabase Postgres. Now it wraps the OUTER graph, not a
+# single agent. Sub-agents don't need their own checkpointers
+# because they read/write through the shared AgentState.
 # ============================================================
 
 _checkpointer: AsyncPostgresSaver | None = None
@@ -57,7 +62,7 @@ _checkpointer_stack: AsyncExitStack | None = None
 
 
 def _safe_db_uri(uri: str) -> str:
-    """URL-encode the password in a Postgres URI so special chars like % are handled."""
+    """URL-encode the password in a Postgres URI so special chars are handled."""
     parsed = urlparse(uri)
     if parsed.password:
         encoded_password = quote(parsed.password, safe="")
@@ -90,7 +95,7 @@ async def _get_checkpointer() -> AsyncPostgresSaver:
                     row_factory=dict_row,
                 )
             )
-            checkpointer = AsyncPostgresSaver(conn=conn)  
+            checkpointer = AsyncPostgresSaver(conn=conn)
             await checkpointer.setup()
         except Exception:
             await stack.aclose()
@@ -105,90 +110,139 @@ async def _get_checkpointer() -> AsyncPostgresSaver:
 
 async def cleanup_checkpointer() -> None:
     """Close the checkpointer connection and clear cached state."""
-    global _agent, _checkpointer, _checkpointer_stack
+    global _graph, _checkpointer, _checkpointer_stack
 
     if _checkpointer_stack is not None:
         await _checkpointer_stack.aclose()
         _checkpointer_stack = None
         _checkpointer = None
-        _agent = None
+        _graph = None
         logger.info("PostgresSaver checkpointer closed")
 
 
 # ============================================================
-# AGENT
+# GRAPH CONSTRUCTION
 # ============================================================
 
-def _build_llm() -> ChatAnthropic:
-    """
-    Build the Claude LLM instance.
+def _route_from_supervisor(state: AgentState) -> str:
+    """Conditional edge: read current_agent to decide the next node.
 
-    We use Claude Haiku 4.5 because it's fast and cheap — ideal for
-    a scheduling agent that needs quick responses but doesn't require
-    deep reasoning.
+    Called after the Supervisor runs. The Supervisor sets current_agent
+    to tell the graph where to go:
+      - "intake" / "triage" / "scheduling" → route to that sub-agent
+      - "supervisor" → Supervisor wants to re-run itself (e.g., after
+        classifying intent, it needs to re-evaluate routing rules)
+      - "done" or anything else → the Supervisor responded directly
+        to the patient (e.g., asked a clarifying question), so we go
+        to END and wait for the next message
     """
-    api_key = settings.anthropic_api_key.strip()
-    if not api_key:
-        raise AgentConfigurationError(
-            "ANTHROPIC_API_KEY is not configured. Set it in backend/.env before "
-            "using the chat API."
-        )
+    next_agent = state.get("current_agent", "")
 
-    return ChatAnthropic(
-        model_name=settings.anthropic_model,
-        api_key=SecretStr(api_key),
-        temperature=0,
-        max_tokens_to_sample=1024,
-        timeout=None,
-        stop=None,
+    if next_agent in ("intake", "triage", "scheduling", "supervisor"):
+        return next_agent
+
+    # Supervisor added a message for the patient — wait for reply
+    return END
+
+
+def _build_graph() -> StateGraph:
+    """Construct the multi-agent state graph.
+
+    Nodes:
+      - supervisor: inspects state, routes to sub-agents or END
+      - intake: identifies / registers patients
+      - triage: collects symptoms, matches to specialty
+      - scheduling: books / reschedules / cancels appointments
+
+    Edges:
+      - START → supervisor (entry point for every message)
+      - supervisor → intake / triage / scheduling (conditional)
+      - supervisor → supervisor (re-run after intent classification)
+      - supervisor → END (waiting for patient input)
+      - intake / triage / scheduling → supervisor (always return)
+    """
+    graph = StateGraph(AgentState)
+
+    # ── Register nodes ───────────────────────────────────
+    graph.add_node("supervisor", supervisor_node)
+    graph.add_node("intake", intake_node)
+    graph.add_node("triage", triage_node)
+    graph.add_node("scheduling", scheduling_node)
+
+    # ── Entry point ──────────────────────────────────────
+    # Every patient message enters through the Supervisor
+    graph.add_edge(START, "supervisor")
+
+    # ── Supervisor routing (conditional edges) ───────────
+    # After the Supervisor runs, _route_from_supervisor
+    # reads current_agent to decide where to go next.
+    graph.add_conditional_edges(
+        "supervisor",
+        _route_from_supervisor,
+        {
+            "intake": "intake",
+            "triage": "triage",
+            "scheduling": "scheduling",
+            "supervisor": "supervisor",
+            END: END,
+        },
     )
 
+    # ── Sub-agent → Supervisor (fixed edges) ─────────────
+    # After any sub-agent finishes, always return to
+    # Supervisor. It re-evaluates state and decides what's
+    # next — route to another agent, or go to END.
+    graph.add_edge("intake", "supervisor")
+    graph.add_edge("triage", "supervisor")
+    graph.add_edge("scheduling", "supervisor")
 
-async def _get_agent() -> Any:
-    """
-    Build the agent with persistent checkpointer.
-
-    create_agent sets up the full observe-think-act loop:
-      - Binds tools to the LLM so it knows what's available
-      - Handles the tool call -> execute -> feed result back cycle
-      - Uses AsyncPostgresSaver to persist messages across turns
-    """
-    checkpointer = await _get_checkpointer()
-
-    return create_agent(
-        model=_build_llm(),
-        tools=ALL_TOOLS,
-        system_prompt=SYSTEM_PROMPT,
-        checkpointer=checkpointer,
-    )
+    return graph
 
 
-_agent: Any | None = None
+# ============================================================
+# COMPILED GRAPH (with checkpointer)
+# ============================================================
+
+_graph: Any | None = None
 
 
-async def _get_or_build_agent() -> Any:
-    """Lazy singleton: build the agent on first request."""
-    global _agent
-    if _agent is None:
-        _agent = await _get_agent()
-    return _agent
+async def _get_or_build_graph() -> Any:
+    """Lazy singleton: build and compile the graph on first request."""
+    global _graph
+    if _graph is None:
+        api_key = settings.anthropic_api_key.strip()
+        if not api_key:
+            raise AgentConfigurationError(
+                "ANTHROPIC_API_KEY is not configured. Set it in backend/.env "
+                "before using the chat API."
+            )
+
+        checkpointer = await _get_checkpointer()
+        graph = _build_graph()
+        _graph = graph.compile(checkpointer=checkpointer)
+        logger.info("Multi-agent graph compiled")
+
+    return _graph
 
 
 async def ensure_agent_ready() -> None:
-    """Eagerly validate configuration and initialize the agent singleton."""
-    await _get_or_build_agent()
+    """Eagerly validate configuration and initialize the graph singleton."""
+    await _get_or_build_graph()
 
+
+# ============================================================
+# TEXT EXTRACTION HELPER
+# ============================================================
 
 def _extract_text_content(content: Any) -> str:
-    """
-    Normalize LangChain message content into plain text.
+    """Normalize LangChain message content into plain text.
 
     LangChain message .content can be either:
       - A plain string: "Welcome back, Sarah!"
-      - A list of content blocks: [{"type": "text", "text": "..."}, {"type": "tool_use", ...}]
+      - A list of content blocks: [{"type": "text", "text": "..."}, ...]
 
-    This helper handles both cases and extracts only the text portions,
-    skipping tool call blocks that the patient shouldn't see.
+    Extracts only text portions, skipping tool call blocks that
+    the patient shouldn't see.
     """
     if isinstance(content, str):
         return content
@@ -198,13 +252,10 @@ def _extract_text_content(content: Any) -> str:
         for item in content:
             if isinstance(item, str):
                 text_parts.append(item)
-                continue
-
-            if isinstance(item, dict):
+            elif isinstance(item, dict):
                 text = item.get("text")
                 if isinstance(text, str):
                     text_parts.append(text)
-
         return "".join(text_parts)
 
     return ""
@@ -213,27 +264,30 @@ def _extract_text_content(content: Any) -> str:
 # ============================================================
 # PUBLIC API
 # ============================================================
+# These functions are the interface that chat/routes.py calls.
+# The signatures are identical to Phase 2 — the multi-agent
+# complexity is entirely hidden behind the same API.
+# ============================================================
 
 async def stream_agent_response(
     message: str,
     thread_id: str,
 ) -> AsyncIterator[str]:
-    """
-    Send a message to the agent and stream the response token by token.
+    """Send a message to the multi-agent graph and stream the response.
 
     Args:
         message: The patient's message text.
-        thread_id: Unique conversation ID. Same thread_id means the same
-            conversation history.
+        thread_id: Unique conversation ID. Same thread_id = same
+            conversation history (persisted via checkpointer).
 
     Yields:
-        Text chunks as they're generated by the LLM.
+        Text chunks as they're generated by whichever agent responds.
     """
-    agent = await _get_or_build_agent()
+    graph = await _get_or_build_graph()
     config = {"configurable": {"thread_id": thread_id}}
     input_message = {"messages": [("human", message)]}
 
-    async for event in agent.astream_events(
+    async for event in graph.astream_events(
         input_message,
         config=config,
         version="v2",
@@ -252,19 +306,36 @@ async def stream_agent_response(
 
 
 async def invoke_agent(message: str, thread_id: str) -> str:
-    """
-    Send a message and get the complete response (non-streaming).
+    """Send a message and get the complete response (non-streaming).
 
     Useful for testing and for contexts where streaming isn't needed.
     """
-    agent = await _get_or_build_agent()
+    graph = await _get_or_build_graph()
     config = {"configurable": {"thread_id": thread_id}}
     input_message = {"messages": [("human", message)]}
 
-    result = cast(dict[str, Any], await agent.ainvoke(input_message, config=config))
-    messages = result.get("messages")
-    if not isinstance(messages, list) or not messages:
-        return ""
+    result = await graph.ainvoke(input_message, config=config)
 
-    last_message = messages[-1]
-    return _extract_text_content(getattr(last_message, "content", None))
+    # Count how many messages were in state before this invocation.
+    # The input adds 1 human message, so new agent messages start
+    # after that. We look at the full result and collect only the
+    # patient-facing AI messages added during THIS turn.
+    #
+    # We find the input human message by ID and collect everything after it.
+    messages = result.get("messages", [])
+
+    # Find where the new human message is — everything after it is new
+    new_start = 0
+    for i, msg in enumerate(messages):
+        if hasattr(msg, "type") and msg.type == "human":
+            new_start = i  # Keep updating — we want the LAST human message
+
+    responses: list[str] = []
+    for msg in messages[new_start + 1:]:
+        if not isinstance(msg, AIMessage):
+            continue
+        text = _extract_text_content(msg.content)
+        if text.strip():
+            responses.append(text.strip())
+
+    return "\n\n".join(responses)

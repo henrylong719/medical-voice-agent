@@ -12,14 +12,19 @@ tool to call. Better descriptions → better tool selection.
 
 from __future__ import annotations
 
+import logging
 from typing import cast
 
 from langchain_core.tools import tool
 from pydantic import BaseModel, Field
 
 from app.supabase_client import supabase
-from app.services.slot_engine import find_slots_for_specialty, find_slots_for_doctor
-from app.services.time_utils import format_for_voice
+from app.services.slot_engine import (
+    find_slots_for_specialty,
+    find_slots_for_doctor,
+    validate_slot_selection,
+)
+from app.services.time_utils import format_for_voice, now_utc
 from app.services.rag_retriever import retrieve_medical_knowledge
 from app.models.db_rows import (
     CancelAppointmentRow,
@@ -31,6 +36,9 @@ from app.models.db_rows import (
     TriageMatchRow,
     TriageScore,
 )
+from app.config import settings
+
+logger = logging.getLogger(__name__)
 
 
 # ============================================================
@@ -50,7 +58,14 @@ class RegisterPatientInput(BaseModel):
     """Input for registering a new patient."""
     uin: str = Field(description="9-digit university ID number")
     full_name: str = Field(description="Patient's full name")
-    phone: str | None = Field(default=None, description="Phone number (optional)")
+    phone: str = Field(
+        description=(
+            "Patient's phone number. This is required for new patient "
+            "registration. Accept any non-empty phone number string exactly "
+            "as the patient provides it; do not require a specific format or "
+            "area code."
+        ),
+    )
 
 
 class TriageSymptomsInput(BaseModel):
@@ -112,23 +127,45 @@ class FindAppointmentInput(BaseModel):
         default=None,
         description="Optional doctor name to filter by (partial match supported)",
     )
+    specialty_name: str | None = Field(
+        default=None,
+        description="Optional specialty name to filter by (partial match supported)",
+    )
 
 
 class RescheduleInput(BaseModel):
     """Input for rescheduling an appointment."""
     appointment_id: str = Field(description="UUID of the appointment to reschedule")
+    patient_id: str = Field(description="UUID of the patient who owns the appointment")
     preferred_day: str | None = Field(
         default=None,
-        description="When the patient wants the new appointment (natural language)",
+        description="When the patient wants the new appointment (natural language, for previewing options)",
     )
     preferred_time: str | None = Field(
         default=None,
-        description="Time of day preference: 'morning', 'afternoon', or empty for any",
+        description="Time of day preference: 'morning', 'afternoon', or empty for any, for previewing options",
+    )
+    new_doctor_id: str | None = Field(
+        default=None,
+        description="Doctor UUID for the confirmed new slot when finalizing the reschedule",
+    )
+    new_specialty_id: str | None = Field(
+        default=None,
+        description="Specialty UUID for the confirmed new slot when finalizing the reschedule",
+    )
+    new_start_at: str | None = Field(
+        default=None,
+        description="Confirmed new slot start time in ISO format when finalizing the reschedule",
+    )
+    new_end_at: str | None = Field(
+        default=None,
+        description="Confirmed new slot end time in ISO format when finalizing the reschedule",
     )
 
 
 class CancelAppointmentInput(BaseModel):
     """Input for cancelling an appointment."""
+    patient_id: str = Field(description="UUID of the patient who owns the appointment")
     appointment_id: str = Field(description="UUID of the appointment to cancel")
 
 
@@ -139,6 +176,40 @@ class CancelAppointmentInput(BaseModel):
 # is the tool description the LLM reads. Return strings —
 # the LLM needs text it can reason about, not raw dicts.
 # ============================================================
+
+
+def _format_doctor_name_for_voice(full_name: str) -> str:
+    """Add a Dr. title unless the source name already includes one."""
+    normalized = full_name.strip()
+    lower = normalized.lower()
+    if lower.startswith("dr. ") or lower.startswith("dr "):
+        return normalized
+    return f"Dr. {normalized}"
+
+
+def _format_preference_suffix(
+    preferred_day: str | None = None,
+    preferred_time: str | None = None,
+) -> str:
+    """Render natural-language slot filters for tool responses."""
+    phrases: list[str] = []
+    if preferred_day:
+        phrases.append(f"for {preferred_day}")
+    if preferred_time:
+        phrases.append(f"in the {preferred_time}")
+    if not phrases:
+        return ""
+    return f" {' '.join(phrases)}"
+
+
+def _coerce_rpc_payload(data: object) -> dict[str, object]:
+    """Normalize Supabase RPC responses into a dict payload."""
+    if isinstance(data, dict):
+        return data
+    if isinstance(data, list) and data and isinstance(data[0], dict):
+        return data[0]
+    return {}
+
 
 @tool(args_schema=IdentifyPatientInput)
 def identify_patient(uin: str) -> str:
@@ -170,11 +241,18 @@ def identify_patient(uin: str) -> str:
 
 
 @tool(args_schema=RegisterPatientInput)
-def register_patient(uin: str, full_name: str, phone: str | None = None) -> str:
+def register_patient(
+    uin: str,
+    full_name: str,
+    phone: str,
+) -> str:
     """Register a new patient who doesn't exist in the system yet.
 
     Use this only AFTER identify_patient confirms the patient is not found.
-    Requires a 9-digit UIN and the patient's full name.
+    Collect the patient's full name and phone number before calling this tool.
+    Accept any non-empty phone number string the patient provides.
+    Only call this AFTER reading the phone number back slowly and confirming
+    with the patient that it is correct.
     """
     # Check if UIN already exists
     existing = (
@@ -186,9 +264,18 @@ def register_patient(uin: str, full_name: str, phone: str | None = None) -> str:
     if existing.data:
         return f"A patient with UIN {uin} already exists. Use identify_patient to look them up."
 
-    data: dict[str, str] = {"uin": uin, "full_name": full_name}
-    if phone:
-        data["phone"] = phone
+    normalized_phone = phone.strip()
+    if not normalized_phone:
+        return (
+            "Phone number missing. Ask the patient for their phone number before "
+            "registering them."
+        )
+
+    data: dict[str, str] = {
+        "uin": uin,
+        "full_name": full_name,
+        "phone": normalized_phone,
+    }
 
     result = supabase.table("patients").insert(data).execute()
 
@@ -337,13 +424,14 @@ def find_slots(
     Searches across all doctors who practice the given specialty.
     Supports natural language day preferences like 'tomorrow', 'next tuesday',
     'this week', or 'next available'. Time preferences: 'morning' or 'afternoon'.
-    Returns up to 5 slots with doctor name, date, and time.
+    Returns up to 20 slots across multiple days so you can present available
+    days to the patient first, then narrow down by time.
     """
     slots = find_slots_for_specialty(
         specialty_id=specialty_id,
         preferred_day=preferred_day,
         preferred_time=preferred_time,
-        max_results=5,
+        max_results=20,
     )
 
     if not slots:
@@ -360,7 +448,7 @@ def find_slots(
     lines = [f"Found {len(slots)} available slot(s):\n"]
     for i, slot in enumerate(slots, 1):
         lines.append(
-            f"{i}. Dr. {slot['doctor_name']} — {slot['label']} "
+            f"{i}. {slot['doctor_name']} — {slot['label']} "
             f"(doctor_id: {slot['doctor_id']}, "
             f"start: {slot['start_at']}, end: {slot['end_at']})"
         )
@@ -382,6 +470,15 @@ def book_appointment(
     Use the exact doctor_id, start_at, and end_at values from find_slots results.
     Only book AFTER the patient has confirmed the slot they want.
     """
+    validation_error = validate_slot_selection(
+        doctor_id=doctor_id,
+        specialty_id=specialty_id,
+        start_at=start_at,
+        end_at=end_at,
+    )
+    if validation_error:
+        return validation_error
+
     data: dict[str, str] = {
         "patient_id": patient_id,
         "doctor_id": doctor_id,
@@ -393,7 +490,11 @@ def book_appointment(
     if reason:
         data["reason"] = reason
 
-    result = supabase.table("appointments").insert(data).execute()
+    try:
+        result = supabase.table("appointments").insert(data).execute()
+    except Exception:
+        logger.exception("Failed to book appointment")
+        return "Failed to book appointment. Please try again."
 
     if not result.data:
         return "Failed to book appointment. Please try again."
@@ -409,7 +510,11 @@ def book_appointment(
 
 
 @tool(args_schema=FindAppointmentInput)
-def find_appointment(patient_id: str, doctor_name: str | None = None) -> str:
+def find_appointment(
+    patient_id: str,
+    doctor_name: str | None = None,
+    specialty_name: str | None = None,
+) -> str:
     """Look up a patient's existing appointments.
 
     Returns upcoming scheduled appointments. Optionally filter by doctor name.
@@ -420,6 +525,7 @@ def find_appointment(patient_id: str, doctor_name: str | None = None) -> str:
         .select("id, start_at, end_at, status, reason, doctors(full_name), specialties(name)")
         .eq("patient_id", patient_id)
         .eq("status", "scheduled")
+        .gte("start_at", now_utc().isoformat())
         .order("start_at")
     )
 
@@ -439,6 +545,18 @@ def find_appointment(patient_id: str, doctor_name: str | None = None) -> str:
         if not appointments:
             return f"No upcoming appointments found with a doctor matching '{doctor_name}'."
 
+    if specialty_name:
+        specialty_lower = specialty_name.lower()
+        appointments = [
+            a for a in appointments
+            if specialty_lower in a["specialties"]["name"].lower()
+        ]
+        if not appointments:
+            return (
+                "No upcoming appointments found with a specialty matching "
+                f"'{specialty_name}'."
+            )
+
     lines = [f"Found {len(appointments)} upcoming appointment(s):\n"]
     for i, appt in enumerate(appointments, 1):
         label = format_for_voice(appt["start_at"])
@@ -456,37 +574,154 @@ def find_appointment(patient_id: str, doctor_name: str | None = None) -> str:
 @tool(args_schema=RescheduleInput)
 def reschedule_appointment(
     appointment_id: str,
+    patient_id: str,
     preferred_day: str | None = None,
     preferred_time: str | None = None,
+    new_doctor_id: str | None = None,
+    new_specialty_id: str | None = None,
+    new_start_at: str | None = None,
+    new_end_at: str | None = None,
 ) -> str:
-    """Reschedule an existing appointment by cancelling it and finding new slots.
+    """Preview or finalize a reschedule for an existing appointment.
 
-    This cancels the old appointment and searches for new available slots
-    with the same doctor and specialty. The patient still needs to confirm
-    and book a new slot after reviewing options.
+    Preview mode:
+      - Provide only appointment_id, preferred_day, and/or preferred_time.
+      - You can call preview mode repeatedly as the patient narrows their
+        preferred day or time.
+      - The tool keeps the current appointment in place and shows alternatives.
+
+    Finalize mode:
+      - Provide appointment_id plus the confirmed new_doctor_id,
+        new_specialty_id, new_start_at, and new_end_at from a slot search result.
+      - The tool validates the slot and updates the existing appointment in place.
     """
+    is_finalize = any(
+        value is not None
+        for value in (
+            new_doctor_id,
+            new_specialty_id,
+            new_start_at,
+            new_end_at,
+        )
+    )
+    has_confirmed_slot = (
+        new_doctor_id is not None
+        and new_specialty_id is not None
+        and new_start_at is not None
+        and new_end_at is not None
+    )
+
+    if is_finalize and not has_confirmed_slot:
+        return (
+            "To finalize a reschedule, provide new_doctor_id, new_specialty_id, "
+            "new_start_at, and new_end_at together."
+        )
+
     # Fetch the existing appointment
     result = (
         supabase.table("appointments")
-        .select("id, doctor_id, specialty_id, start_at, status, doctors(full_name), specialties(name)")
+        .select(
+            "id, patient_id, doctor_id, specialty_id, start_at, end_at, status, "
+            "reason, doctors(full_name), specialties(name)"
+        )
         .eq("id", appointment_id)
+        .eq("patient_id", patient_id)
         .execute()
     )
 
     if not result.data:
-        return f"Appointment {appointment_id} not found."
+        return f"Appointment {appointment_id} not found for this patient."
 
     appt = cast(list[RescheduleAppointmentRow], result.data)[0]
 
     if appt["status"] == "cancelled":
         return "This appointment is already cancelled."
 
-    # Cancel the old appointment
-    supabase.table("appointments").update(
-        {"status": "cancelled"}
-    ).eq("id", appointment_id).execute()
-
     old_label = format_for_voice(appt["start_at"])
+    doctor_name = _format_doctor_name_for_voice(appt["doctors"]["full_name"])
+
+    if has_confirmed_slot:
+        assert new_doctor_id is not None
+        assert new_specialty_id is not None
+        assert new_start_at is not None
+        assert new_end_at is not None
+
+        confirmed_doctor_id = new_doctor_id
+        confirmed_specialty_id = new_specialty_id
+        confirmed_start_at = new_start_at
+        confirmed_end_at = new_end_at
+
+        if (
+            confirmed_doctor_id == appt["doctor_id"]
+            and confirmed_specialty_id == appt["specialty_id"]
+            and confirmed_start_at == appt["start_at"]
+            and confirmed_end_at == appt["end_at"]
+        ):
+            return "This appointment is already scheduled for that time."
+
+        validation_error = validate_slot_selection(
+            doctor_id=confirmed_doctor_id,
+            specialty_id=confirmed_specialty_id,
+            start_at=confirmed_start_at,
+            end_at=confirmed_end_at,
+            exclude_appointment_id=appointment_id,
+        )
+        if validation_error:
+            return f"{validation_error} The original appointment was kept."
+
+        try:
+            rpc_result = supabase.rpc(
+                "finalize_reschedule_appointment",
+                {
+                    "p_appointment_id": appointment_id,
+                    "p_patient_id": patient_id,
+                    "p_new_doctor_id": confirmed_doctor_id,
+                    "p_new_specialty_id": confirmed_specialty_id,
+                    "p_new_start_at": confirmed_start_at,
+                    "p_new_end_at": confirmed_end_at,
+                    "p_timezone": settings.timezone,
+                },
+            ).execute()
+        except Exception:
+            logger.exception("Failed to reschedule appointment")
+            return "Failed to update the appointment. The original appointment was kept."
+
+        payload = _coerce_rpc_payload(rpc_result.data)
+        status = payload.get("status")
+
+        if status == "appointment_not_found":
+            return f"Appointment {appointment_id} not found for this patient."
+        if status == "appointment_cancelled":
+            return "This appointment is already cancelled."
+        if status == "appointment_not_reschedulable":
+            return "This appointment can no longer be rescheduled."
+        if status == "same_slot":
+            return "This appointment is already scheduled for that time."
+        if status == "invalid_doctor_specialty":
+            return (
+                "That doctor is not available for the selected specialty. "
+                "The original appointment was kept."
+            )
+        if status == "invalid_slot":
+            return (
+                "That time does not match the doctor's current availability. "
+                "Please choose one of the offered slots. The original appointment was kept."
+            )
+        if status in ("doctor_blocked", "slot_unavailable"):
+            return (
+                "That slot is no longer available. Please choose another available "
+                "time. The original appointment was kept."
+            )
+        if status != "ok":
+            logger.error("Unexpected finalize_reschedule_appointment status: %r", status)
+            return "Failed to update the appointment. The original appointment was kept."
+
+        new_label = format_for_voice(confirmed_start_at)
+        return (
+            "Appointment rescheduled successfully! "
+            f"Old appointment on {old_label} was moved to {new_label}. "
+            f"Appointment ID: {appointment_id}."
+        )
 
     # Find new slots with the same doctor and specialty
     new_slots = find_slots_for_doctor(
@@ -496,31 +731,44 @@ def reschedule_appointment(
         preferred_time=preferred_time,
         max_results=5,
     )
+    preference_suffix = _format_preference_suffix(
+        preferred_day=preferred_day,
+        preferred_time=preferred_time,
+    )
 
     lines = [
-        f"Cancelled appointment with Dr. {appt['doctors']['full_name']} "
-        f"({appt['specialties']['name']}) on {old_label}.\n"
+        f"Current appointment: {doctor_name} "
+        f"({appt['specialties']['name']}) on {old_label} "
+        f"(appointment_id: {appt['id']}, specialty_id: {appt['specialty_id']}).\n",
+        "The current appointment has NOT been cancelled.\n",
     ]
+    if preference_suffix:
+        lines.append(f"Search criteria: same doctor{preference_suffix}.\n")
 
     if new_slots:
-        lines.append(f"Here are {len(new_slots)} new slot(s) with the same doctor:\n")
+        lines.append(
+            f"Here are {len(new_slots)} alternative slot(s) with the same doctor"
+            f"{preference_suffix}:\n"
+        )
         for i, slot in enumerate(new_slots, 1):
             lines.append(
                 f"{i}. {slot['label']} "
                 f"(doctor_id: {slot['doctor_id']}, "
+                f"specialty_id: {slot['specialty_id']}, "
                 f"start: {slot['start_at']}, end: {slot['end_at']})"
             )
     else:
         lines.append(
-            "No available slots found with the same doctor. "
-            "You can use find_slots with the specialty_id to search other doctors."
+            f"No available slots found with the same doctor{preference_suffix}. "
+            f"You can use find_slots with specialty_id {appt['specialty_id']} "
+            "to search other doctors."
         )
 
     return "\n".join(lines)
 
 
 @tool(args_schema=CancelAppointmentInput)
-def cancel_appointment(appointment_id: str) -> str:
+def cancel_appointment(patient_id: str, appointment_id: str) -> str:
     """Cancel an existing appointment.
 
     Use this only AFTER the patient has confirmed they want to cancel.
@@ -531,11 +779,12 @@ def cancel_appointment(appointment_id: str) -> str:
         supabase.table("appointments")
         .select("id, start_at, status, doctors(full_name), specialties(name)")
         .eq("id", appointment_id)
+        .eq("patient_id", patient_id)
         .execute()
     )
 
     if not result.data:
-        return f"Appointment {appointment_id} not found."
+        return f"Appointment {appointment_id} not found for this patient."
 
     appt = cast(list[CancelAppointmentRow], result.data)[0]
 
@@ -543,13 +792,17 @@ def cancel_appointment(appointment_id: str) -> str:
         return "This appointment is already cancelled."
 
     # Cancel it
-    supabase.table("appointments").update(
-        {"status": "cancelled"}
-    ).eq("id", appointment_id).execute()
+    try:
+        supabase.table("appointments").update({"status": "cancelled"}).eq(
+            "id", appointment_id
+        ).eq("patient_id", patient_id).execute()
+    except Exception:
+        logger.exception("Failed to cancel appointment")
+        return "Failed to cancel appointment. Please try again."
 
     label = format_for_voice(appt["start_at"])
     return (
-        f"Appointment with Dr. {appt['doctors']['full_name']} "
+        f"Appointment with {_format_doctor_name_for_voice(appt['doctors']['full_name'])} "
         f"({appt['specialties']['name']}) on {label} has been cancelled."
     )
 

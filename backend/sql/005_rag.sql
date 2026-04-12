@@ -3,7 +3,7 @@
 -- Enables pgvector, creates medical_knowledge table, and adds
 -- the similarity search RPC function.
 --
--- Run this in Supabase SQL Editor AFTER schema.sql and seed.sql.
+-- Run this in Supabase SQL Editor AFTER 001_schema.sql and 002_seed.sql.
 -- ============================================================
 
 

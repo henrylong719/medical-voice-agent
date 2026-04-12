@@ -128,10 +128,13 @@ class FindAppointmentRow(TypedDict):
 class RescheduleAppointmentRow(TypedDict):
     """Shape for reschedule lookups (needs doctor_id and specialty_id for re-search)."""
     id: str
+    patient_id: str
     doctor_id: str
     specialty_id: str
     start_at: str
+    end_at: str
     status: str
+    reason: str | None
     doctors: NestedDoctorName
     specialties: NestedSpecialtyName
 

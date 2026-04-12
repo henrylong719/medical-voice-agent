@@ -4,9 +4,16 @@ FastAPI application entry point.
 Run with: uvicorn app.main:app --reload
 The --reload flag watches for file changes during development.
 """
+import logging
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(name)s %(levelname)s %(message)s",
+)
 
 import os
 from contextlib import asynccontextmanager
+
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware

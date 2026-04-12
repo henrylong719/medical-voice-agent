@@ -5,6 +5,7 @@
 
 -- Enable UUID generation (Supabase usually has this, but just in case)
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+CREATE EXTENSION IF NOT EXISTS "btree_gist";
 
 -- ============================================================
 -- CUSTOM TYPES (Enums)
@@ -153,6 +154,11 @@ CREATE TABLE appointments (
     -- appointment must have positive duration
     CONSTRAINT valid_appointment_range CHECK (end_at > start_at),
 
+    -- appointment specialty must actually belong to the selected doctor
+    CONSTRAINT valid_appointment_doctor_specialty
+        FOREIGN KEY (doctor_id, specialty_id)
+        REFERENCES doctor_specialties(doctor_id, specialty_id),
+
     -- severity rating from triage (1 = minor, 10 = critical)
     severity_rating INTEGER,
     CONSTRAINT valid_severity CHECK (severity_rating IS NULL OR severity_rating BETWEEN 1 AND 10)
@@ -166,6 +172,15 @@ CREATE INDEX idx_appointments_doctor_time ON appointments(doctor_id, start_at, e
 
 -- Index for status filtering: "find all scheduled appointments"
 CREATE INDEX idx_appointments_status ON appointments(status);
+
+-- Prevent overlapping live appointments for the same doctor.
+ALTER TABLE appointments
+    ADD CONSTRAINT appointments_doctor_no_overlap
+    EXCLUDE USING GIST (
+        doctor_id WITH =,
+        tstzrange(start_at, end_at, '[)') WITH &&
+    )
+    WHERE (status <> 'cancelled');
 
 -- ============================================================
 -- GROUP 5: Conversations

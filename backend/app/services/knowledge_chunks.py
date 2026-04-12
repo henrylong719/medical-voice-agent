@@ -14,10 +14,10 @@ Design principles:
   - Right-sized: ~200–500 tokens per chunk (enough context for good embeddings,
     focused enough for precise retrieval)
 
-These chunks reference specialties from seed.sql using the same UUIDs.
+These chunks reference specialties from 002_seed.sql using the same UUIDs.
 """
 
-# Specialty UUIDs from seed.sql — keep in sync
+# Specialty UUIDs from 002_seed.sql — keep in sync
 SPECIALTY_IDS = {
     "cardiology":       "a1000000-0000-0000-0000-000000000001",
     "neurology":        "a1000000-0000-0000-0000-000000000002",
