@@ -49,6 +49,41 @@ logger = logging.getLogger(__name__)
 _VISIT_STATUS_QUESTION = (
     "Have you been seen at this clinic before, or is this your first visit?"
 )
+_PATIENT_STATUS_SYSTEM_PROMPT = """\
+You are classifying a patient's answer to this clinic question:
+"Have you been seen at this clinic before, or is this your first visit?"
+
+Respond with EXACTLY one word:
+- new — the patient says this is their first visit or they have not been seen before
+- returning — the patient says they have been seen before or are an existing patient
+- unknown — the answer is unclear, unrelated, or does not answer the question
+"""
+_IDENTITY_CORRECTION_SYSTEM_PROMPT = """\
+You are classifying a patient's latest message in a clinic conversation.
+
+Respond with EXACTLY one word:
+- correction — the patient says the current record is not theirs, or that key identity details are wrong enough that the clinic should re-verify identity
+- none — anything else
+
+Only classify as correction when the patient is disputing identity or clearly correcting identifying details.
+Do NOT classify scheduling preferences, symptoms, or ordinary conversation as correction.
+"""
+_INTENT_SWITCH_SYSTEM_PROMPT = """\
+You are classifying whether a patient's latest message changes what they want to do now.
+
+The current intent is one of: book, reschedule, cancel.
+
+Respond with EXACTLY one word:
+- book — only if the patient is clearly switching to booking a new appointment
+- reschedule — only if the patient is clearly switching to moving an existing appointment
+- cancel — only if the patient is clearly switching to cancelling an existing appointment
+- none — if they are not changing intents, or the message is only clarifying details within the current intent
+
+Be careful:
+- "Actually, next week works better" during booking is still booking, so answer none
+- "Actually, I'd like to cancel instead" is a switch to cancel
+- "Can we move this appointment?" is a switch to reschedule
+"""
 
 
 # ============================================================
@@ -170,13 +205,111 @@ def _looks_like_identity_correction(message: HumanMessage) -> bool:
         "my passport number is",
         "my driver's license is",
         "my drivers license is",
+        "not my record",
+        "isn't my record",
+        "not the right patient",
         "wrong id",
         "different id",
         "wrong record",
         "wrong patient",
+        "wrong phone number",
+        "not my phone number",
+        "wrong date of birth",
+        "not my date of birth",
+        "wrong dob",
+        "not my dob",
         "not me",
     )
     return any(marker in normalized for marker in correction_markers)
+
+
+def _may_need_identity_reverification(message: HumanMessage) -> bool:
+    """Return True for messages that plausibly dispute identity details."""
+    normalized = " ".join(_flatten_message_content(message.content).lower().split())
+    if not normalized:
+        return False
+
+    identity_terms = (
+        "record",
+        "patient",
+        "phone",
+        "date of birth",
+        "birth date",
+        "birthday",
+        "dob",
+        "mrn",
+        "passport",
+        "license",
+        "id",
+        "name",
+    )
+    correction_terms = (
+        "wrong",
+        "not",
+        "different",
+        "old",
+        "isn't",
+        "isnt",
+        "doesn't",
+        "doesnt",
+        "mismatch",
+        "another",
+    )
+    explicit_identifier_corrections = (
+        "my mrn is",
+        "my passport number is",
+        "my driver's license is",
+        "my drivers license is",
+        "my phone number is",
+        "my date of birth is",
+        "my dob is",
+        "my birthday is",
+    )
+
+    has_identity_term = any(term in normalized for term in identity_terms)
+    has_correction_term = any(term in normalized for term in correction_terms)
+    has_explicit_identifier = any(
+        marker in normalized for marker in explicit_identifier_corrections
+    )
+    return (has_identity_term and has_correction_term) or has_explicit_identifier
+
+
+async def _classify_identity_correction_with_llm(
+    latest_ai: AIMessage | None,
+    latest_human: HumanMessage,
+) -> bool:
+    """Use a constrained LLM fallback for plausible identity corrections."""
+    llm = ChatAnthropic(
+        model_name=settings.anthropic_model,
+        api_key=SecretStr(settings.anthropic_api_key),
+        temperature=0,
+        max_tokens_to_sample=10,
+        timeout=None,
+        stop=None,
+    )
+
+    clinic_text = _flatten_message_content(latest_ai.content) if latest_ai else ""
+    patient_text = _flatten_message_content(latest_human.content)
+    response = await llm.ainvoke(
+        [
+            SystemMessage(content=_IDENTITY_CORRECTION_SYSTEM_PROMPT),
+            HumanMessage(
+                content=(
+                    f"Clinic message: {clinic_text or '[none]'}\n"
+                    f"Patient message: {patient_text}"
+                )
+            ),
+        ]
+    )
+
+    content = response.content
+    if isinstance(content, list):
+        content = "".join(
+            block.get("text", "") if isinstance(block, dict) else str(block)
+            for block in content
+        )
+
+    return content.strip().lower() == "correction"
 
 
 def _awaiting_patient_status_answer(state: AgentState) -> bool:
@@ -184,8 +317,11 @@ def _awaiting_patient_status_answer(state: AgentState) -> bool:
     latest_ai = _latest_ai_message_before_latest_human(state)
     if latest_ai is None:
         return False
-    normalized = " ".join(_flatten_message_content(latest_ai.content).split())
-    return normalized == _VISIT_STATUS_QUESTION
+    normalized = " ".join(_flatten_message_content(latest_ai.content).lower().split())
+    return (
+        "seen at this clinic before" in normalized
+        and "first visit" in normalized
+    )
 
 
 def _classify_patient_status(
@@ -211,8 +347,13 @@ def _classify_patient_status(
     returning_markers = (
         "returning",
         "existing patient",
+        "been before",
+        "been here before",
         "been there before",
+        "seen here before",
         "been seen there before",
+        "came before",
+        "come before",
         "i have",
         "yes",
     )
@@ -222,6 +363,40 @@ def _classify_patient_status(
     tokens = normalized.split()
     if any(token in {"no", "nope", "nah"} for token in tokens):
         return "new"
+
+    return None
+
+
+async def _classify_patient_status_with_llm(
+    message: HumanMessage,
+) -> Literal["new", "returning"] | None:
+    """Use a constrained LLM fallback for natural new/returning answers."""
+    llm = ChatAnthropic(
+        model_name=settings.anthropic_model,
+        api_key=SecretStr(settings.anthropic_api_key),
+        temperature=0,
+        max_tokens_to_sample=10,
+        timeout=None,
+        stop=None,
+    )
+
+    response = await llm.ainvoke(
+        [
+            SystemMessage(content=_PATIENT_STATUS_SYSTEM_PROMPT),
+            HumanMessage(content=_flatten_message_content(message.content)),
+        ]
+    )
+
+    content = response.content
+    if isinstance(content, list):
+        content = "".join(
+            block.get("text", "") if isinstance(block, dict) else str(block)
+            for block in content
+        )
+
+    raw = content.strip().lower()
+    if raw in ("new", "returning"):
+        return raw  # type: ignore[return-value]
 
     return None
 
@@ -250,8 +425,11 @@ def _intent_keyword_from_message(
 
     booking_markers = (
         "book an appointment",
+        "book a new appointment",
         "make an appointment",
+        "make a new appointment",
         "schedule an appointment",
+        "schedule a new appointment",
         "book a visit",
     )
     if any(marker in normalized for marker in booking_markers):
@@ -269,11 +447,116 @@ def _looks_like_explicit_intent_switch(
     if not normalized:
         return False
 
-    if any(marker in normalized for marker in ("actually", "instead", "rather")):
-        return True
-
     keyword_intent = _intent_keyword_from_message(message)
     return keyword_intent is not None and keyword_intent != current_intent
+
+
+def _may_need_intent_switch_review(
+    message: HumanMessage,
+    current_intent: Literal["book", "reschedule", "cancel"],
+) -> bool:
+    """Return True when the latest turn plausibly changes intent but is ambiguous."""
+    normalized = " ".join(_flatten_message_content(message.content).lower().split())
+    if not normalized:
+        return False
+
+    keyword_intent = _intent_keyword_from_message(message)
+    if keyword_intent is not None:
+        return False
+
+    switch_markers = (
+        "actually",
+        "instead",
+        "rather",
+        "wait",
+        "sorry",
+        "on second thought",
+        "change of plans",
+    )
+    appointment_terms = (
+        "appointment",
+        "visit",
+        "slot",
+        "book",
+        "booking",
+        "schedule",
+        "scheduled",
+        "reschedule",
+        "cancel",
+    )
+    change_terms = (
+        "move",
+        "different",
+        "another",
+        "change",
+        "cancel",
+        "reschedule",
+        "book",
+    )
+    time_terms = (
+        "day",
+        "time",
+        "week",
+        "month",
+    )
+    reference_terms = (
+        "this",
+        "that",
+        "my",
+    )
+
+    has_switch_marker = any(marker in normalized for marker in switch_markers)
+    has_appointment_context = any(term in normalized for term in appointment_terms)
+    has_change_language = any(term in normalized for term in change_terms)
+    has_time_language = any(term in normalized for term in time_terms)
+    has_reference_language = any(term in normalized.split() for term in reference_terms)
+
+    if has_appointment_context and has_change_language and (
+        has_switch_marker or has_time_language or has_reference_language
+    ):
+        return True
+
+    return False
+
+
+async def _classify_intent_switch_with_llm(
+    message: HumanMessage,
+    current_intent: Literal["book", "reschedule", "cancel"],
+) -> Literal["book", "reschedule", "cancel"] | None:
+    """Use a constrained LLM fallback for ambiguous intent-switch turns."""
+    llm = ChatAnthropic(
+        model_name=settings.anthropic_model,
+        api_key=SecretStr(settings.anthropic_api_key),
+        temperature=0,
+        max_tokens_to_sample=10,
+        timeout=None,
+        stop=None,
+    )
+
+    response = await llm.ainvoke(
+        [
+            SystemMessage(content=_INTENT_SWITCH_SYSTEM_PROMPT),
+            HumanMessage(
+                content=(
+                    f"Current intent: {current_intent}\n"
+                    f"Patient message: {_flatten_message_content(message.content)}"
+                )
+            ),
+        ]
+    )
+
+    content = response.content
+    if isinstance(content, list):
+        content = "".join(
+            block.get("text", "") if isinstance(block, dict) else str(block)
+            for block in content
+        )
+
+    raw = content.strip().lower()
+    if raw in ("book", "reschedule", "cancel"):
+        return raw  # type: ignore[return-value]
+
+    return None
 
 
 # ============================================================
@@ -386,23 +669,14 @@ async def supervisor_node(state: AgentState) -> dict:
     # to reschedule instead." If we keep the old intent, the wrong
     # sub-agent will answer from stale context.
     latest_human = _latest_human_message(state)
-    if latest_human is not None and _looks_like_explicit_intent_switch(latest_human, intent):
-        override_intent = _intent_keyword_from_message(latest_human)
-        if override_intent is None:
-            override_intent = await _classify_intent(
-                {
-                    "messages": [latest_human],
-                    "patient_id": patient_id,
-                    "patient_name": patient_name,
-                    "patient_status": patient_status,
-                    "symptoms": [],
-                    "specialty_id": None,
-                    "appointment_id": state.get("appointment_id"),
-                    "selected_appointment_id": state.get("selected_appointment_id"),
-                    "current_agent": "supervisor",
-                    "intent": intent,
-                    "last_agent": last_agent,
-                }
+    if latest_human is not None:
+        override_intent = None
+        if _looks_like_explicit_intent_switch(latest_human, intent):
+            override_intent = _intent_keyword_from_message(latest_human)
+        elif _may_need_intent_switch_review(latest_human, intent):
+            override_intent = await _classify_intent_switch_with_llm(
+                latest_human,
+                intent,
             )
 
         if override_intent is not None and override_intent != intent:
@@ -421,22 +695,30 @@ async def supervisor_node(state: AgentState) -> dict:
     if (
         latest_human is not None
         and patient_id is not None
-        and _looks_like_identity_correction(latest_human)
     ):
-        logger.info("Patient corrected identity mid-conversation — returning to intake")
-        return {
-            "patient_id": None,
-            "patient_name": None,
-            "appointment_id": None,
-            "selected_appointment_id": None,
-            "current_agent": "intake",
-            "last_agent": None,
-        }
+        identity_correction = _looks_like_identity_correction(latest_human)
+        if not identity_correction and _may_need_identity_reverification(latest_human):
+            identity_correction = await _classify_identity_correction_with_llm(
+                _latest_ai_message_before_latest_human(state),
+                latest_human,
+            )
+        if identity_correction:
+            logger.info("Patient corrected identity mid-conversation — returning to intake")
+            return {
+                "patient_id": None,
+                "patient_name": None,
+                "appointment_id": None,
+                "selected_appointment_id": None,
+                "current_agent": "intake",
+                "last_agent": None,
+            }
 
     # ── Rule 3: For new bookings, ask if they are new or returning ───────
     if intent == "book" and patient_id is None and patient_status is None:
         if latest_human is not None and _awaiting_patient_status_answer(state):
             classified_status = _classify_patient_status(latest_human)
+            if classified_status is None:
+                classified_status = await _classify_patient_status_with_llm(latest_human)
             if classified_status is not None:
                 logger.info("Patient status classified as: %s", classified_status)
                 return {

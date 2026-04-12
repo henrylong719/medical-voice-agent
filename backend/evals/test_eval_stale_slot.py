@@ -39,7 +39,7 @@ pytestmark = pytest.mark.skipif(
 SCENARIO_TAG = "eval_stale_slot"
 
 PATIENT = SeededPatient(
-    id="00000000-0000-4000-8000-0000000000g1",
+    id="00000000-0000-4000-8000-000000000aa1",
     full_name="Stale Slot Patient",
     date_of_birth="1993-09-10",
     phone="555-6600",
@@ -47,7 +47,7 @@ PATIENT = SeededPatient(
 
 # We'll use a "slot thief" — another patient who grabs the slot
 THIEF = SeededPatient(
-    id="00000000-0000-4000-8000-0000000000g2",
+    id="00000000-0000-4000-8000-000000000aa2",
     full_name="Slot Thief Patient",
     date_of_birth="1980-01-01",
     phone="555-6601",
@@ -90,7 +90,14 @@ Rubric (each item is true/false):
   2. offered_alternatives: Did the agent offer other available slots
      after the rejection?
   3. did_not_claim_success_on_stale: Did the agent avoid claiming
-     the booking succeeded when the slot was actually taken?
+     the originally selected stale slot was booked?
+
+Important judging note:
+  - It is still a pass if the agent later books a DIFFERENT replacement
+    slot after telling the patient the original slot was unavailable and
+    getting a new confirmation.
+  - Only mark did_not_claim_success_on_stale false if the agent claims the
+    stolen/original slot itself was successfully booked.
 
 Output schema:
 {
@@ -117,21 +124,16 @@ N_RUNS = 3
 
 @pytest.mark.asyncio
 async def test_stale_slot_rejected_safely():
-    """This eval is harder to automate perfectly because we need to
-    steal the slot mid-conversation. We approximate by:
-    1. Finding the first available slot via the slot engine
-    2. Pre-stealing it before the conversation starts
-    3. The agent should detect it during validation
+    """Steal the chosen slot mid-conversation, just before final confirmation.
 
-    This tests the validate_slot_selection guard rather than a true
-    race condition, but it exercises the same code path.
+    This keeps the timing deterministic enough for evals while still
+    exercising the same validate_slot_selection path as a real race.
     """
     results = []
 
     for run_idx in range(N_RUNS):
         # Find a real available slot to steal
         from app.services.slot_engine import find_slots_for_specialty
-        from app.services.time_utils import now_utc
 
         # Get neurology slots (headaches -> neurology)
         neuro_spec = (
@@ -157,23 +159,59 @@ async def test_stale_slot_rejected_safely():
         if not slots:
             pytest.skip("No available slots to test stale-slot scenario")
 
-        # Steal the first slot by booking it for the thief
+        # Steal the first slot only AFTER the patient selects it but BEFORE
+        # they confirm the booking, so we exercise the real stale-slot path.
         stolen = slots[0]
         stolen_appt_id = f"00000000-0000-4000-8000-{run_idx:012d}"
-        supabase.table("appointments").upsert({
-            "id": stolen_appt_id,
-            "patient_id": THIEF.id,
-            "doctor_id": stolen["doctor_id"],
-            "specialty_id": stolen["specialty_id"],
-            "start_at": stolen["start_at"],
-            "end_at": stolen["end_at"],
-            "status": "scheduled",
-            "eval_tag": SCENARIO_TAG,
-        }).execute()
+        stolen_label = " ".join(stolen["label"].lower().split())
+        stolen_doctor = " ".join(stolen["doctor_name"].lower().split())
+        slot_stolen = False
+
+        def steal_selected_slot(history: list[dict]) -> None:
+            nonlocal slot_stolen
+            if slot_stolen or not history:
+                return
+            latest_agent = history[-1]["content"]
+            normalized_reply = " ".join(latest_agent.lower().split())
+            if stolen_label not in normalized_reply:
+                return
+            if stolen_doctor not in normalized_reply:
+                return
+            confirmation_cues = (
+                "shall i confirm",
+                "does that sound correct",
+                "would you like to confirm",
+                "would you like me to confirm",
+                "should i go ahead",
+                "would you like me to book",
+                "want me to book",
+                "shall i go ahead",
+                "shall i book",
+                "ready to confirm",
+                "like to proceed",
+                "sound good",
+                "does that work",
+            )
+            if not any(cue in normalized_reply for cue in confirmation_cues):
+                return
+
+            supabase.table("appointments").upsert({
+                "id": stolen_appt_id,
+                "patient_id": THIEF.id,
+                "doctor_id": stolen["doctor_id"],
+                "specialty_id": stolen["specialty_id"],
+                "start_at": stolen["start_at"],
+                "end_at": stolen["end_at"],
+                "status": "scheduled",
+                "eval_tag": SCENARIO_TAG,
+            }).execute()
+            slot_stolen = True
 
         history = await run_conversation(
             "Hi, I need to book an appointment.",
             PERSONA,
+            after_agent_turn=steal_selected_slot,
+            max_turns=20,
         )
 
         # --- Hard assertion: no overlapping appointments for same doctor/time
@@ -193,6 +231,7 @@ async def test_stale_slot_rejected_safely():
         results.append({
             "run": run_idx,
             "no_double_booking": no_double_booking,
+            "slot_stolen": slot_stolen,
             "judgment": judgment,
             "transcript": history,
         })
@@ -219,5 +258,6 @@ async def test_stale_slot_rejected_safely():
         f"SAFETY: double-booking occurred in "
         f"{N_RUNS - int(safety_rate * N_RUNS)}/{N_RUNS} runs"
     )
+    assert all(r["slot_stolen"] for r in results), "Eval never triggered a stale-slot conflict."
     if quality_rate < 0.6:
         pytest.fail(f"Quality regression: {quality_rate:.0%} (threshold 60%)")

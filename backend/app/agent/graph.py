@@ -25,6 +25,7 @@ and write to the shared AgentState.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from contextlib import AsyncExitStack
 from typing import Any, AsyncIterator
@@ -59,6 +60,7 @@ class AgentConfigurationError(RuntimeError):
 
 _checkpointer: AsyncPostgresSaver | None = None
 _checkpointer_stack: AsyncExitStack | None = None
+_checkpointer_loop: asyncio.AbstractEventLoop | None = None
 
 
 def _safe_db_uri(uri: str) -> str:
@@ -75,7 +77,9 @@ def _safe_db_uri(uri: str) -> str:
 
 async def _get_checkpointer() -> AsyncPostgresSaver:
     """Get or create the AsyncPostgresSaver singleton."""
-    global _checkpointer, _checkpointer_stack
+    global _checkpointer, _checkpointer_stack, _checkpointer_loop
+
+    running_loop = asyncio.get_running_loop()
 
     db_uri = settings.supabase_db_uri.strip()
     if not db_uri:
@@ -83,6 +87,10 @@ async def _get_checkpointer() -> AsyncPostgresSaver:
             "SUPABASE_DB_URI is not configured. Set it in backend/.env before "
             "using the chat API."
         )
+
+    if _checkpointer is not None and _checkpointer_loop is not running_loop:
+        logger.info("Event loop changed; resetting cached checkpointer")
+        await cleanup_checkpointer()
 
     if _checkpointer is None:
         stack = AsyncExitStack()
@@ -103,6 +111,7 @@ async def _get_checkpointer() -> AsyncPostgresSaver:
 
         _checkpointer = checkpointer
         _checkpointer_stack = stack
+        _checkpointer_loop = running_loop
         logger.info("PostgresSaver checkpointer initialized")
 
     return _checkpointer
@@ -110,14 +119,23 @@ async def _get_checkpointer() -> AsyncPostgresSaver:
 
 async def cleanup_checkpointer() -> None:
     """Close the checkpointer connection and clear cached state."""
-    global _graph, _checkpointer, _checkpointer_stack
+    global _graph, _graph_loop, _checkpointer, _checkpointer_loop, _checkpointer_stack
 
     if _checkpointer_stack is not None:
-        await _checkpointer_stack.aclose()
-        _checkpointer_stack = None
-        _checkpointer = None
-        _graph = None
+        try:
+            await _checkpointer_stack.aclose()
+        except Exception:
+            logger.warning(
+                "Failed to close cached PostgresSaver cleanly; resetting state anyway",
+                exc_info=True,
+            )
         logger.info("PostgresSaver checkpointer closed")
+
+    _checkpointer_stack = None
+    _checkpointer = None
+    _checkpointer_loop = None
+    _graph = None
+    _graph_loop = None
 
 
 # ============================================================
@@ -204,11 +222,18 @@ def _build_graph() -> StateGraph:
 # ============================================================
 
 _graph: Any | None = None
+_graph_loop: asyncio.AbstractEventLoop | None = None
 
 
 async def _get_or_build_graph() -> Any:
     """Lazy singleton: build and compile the graph on first request."""
-    global _graph
+    global _graph, _graph_loop
+
+    running_loop = asyncio.get_running_loop()
+    if _graph is not None and _graph_loop is not running_loop:
+        logger.info("Event loop changed; resetting cached compiled graph")
+        await cleanup_checkpointer()
+
     if _graph is None:
         api_key = settings.anthropic_api_key.strip()
         if not api_key:
@@ -220,6 +245,7 @@ async def _get_or_build_graph() -> Any:
         checkpointer = await _get_checkpointer()
         graph = _build_graph()
         _graph = graph.compile(checkpointer=checkpointer)
+        _graph_loop = running_loop
         logger.info("Multi-agent graph compiled")
 
     return _graph

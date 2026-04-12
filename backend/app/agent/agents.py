@@ -15,12 +15,16 @@ No checkpointer on sub-agents — the outer graph owns persistence.
 
 from __future__ import annotations
 
+from datetime import datetime
 import json
 import logging
+import re
 from typing import Any
+from typing import Literal
 
 from langchain.agents import create_agent
 from langchain_anthropic import ChatAnthropic
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from pydantic import SecretStr
 
 from app.agent.state import AgentState
@@ -39,6 +43,15 @@ from app.agent.tools import (
 from app.config import settings
 
 logger = logging.getLogger(__name__)
+
+_IDENTITY_CONFIRMATION_SYSTEM_PROMPT = """\
+You are classifying a patient's answer after a clinic asks whether a matched record is theirs.
+
+Respond with EXACTLY one word:
+- affirmative — the patient confirms the record is theirs
+- negative — the patient says the record is not theirs or corrects the identity
+- unknown — the answer is unclear or does not answer the question
+"""
 
 
 # ============================================================
@@ -74,6 +87,9 @@ or register the patient. The patient has already been greeted — do NOT greet \
 them again.
 
 ## What to do
+0. If the patient wants to reschedule or cancel an appointment, treat them as a \
+returning patient immediately. Do NOT ask whether they have been seen here before. \
+Instead, ask for their full name and date of birth right away.
 1. If the patient says this is their first visit or they are a new patient, \
 collect their full name, date of birth, and phone number. If any detail is \
 missing, ask for one missing item at a time. Do NOT call register_patient until \
@@ -81,28 +97,40 @@ you have all three.
 2. Once the patient gives a phone number for registration, read it back slowly \
 and confirm it is correct. Only call register_patient AFTER the patient confirms \
 the phone number is right.
-3. If the patient says they have been seen here before, first collect their full \
+3. For new patients, call register_patient as soon as you have confirmed the phone \
+number. Do NOT tell the patient they are registered unless register_patient has \
+succeeded in this turn.
+4. If the patient says they have been seen here before, first collect their full \
 name and date of birth and call find_patients_by_demographics.
-4. If demographic lookup returns a single match, confirm the patient's name and date of \
+5. If demographic lookup returns a single match, confirm the patient's name and date of \
 birth with them and wait for an explicit yes. Once confirmed, STOP.
-5. If demographic lookup returns multiple matches and you do not have a phone \
+6. If demographic lookup returns multiple matches and you do not have a phone \
 number yet, ask for the phone number and call find_patients_by_demographics \
 again with it.
-6. If demographic lookup still returns multiple matches after using the phone number, \
+7. If demographic lookup still returns multiple matches after using the phone number, \
 ask whether they know an MRN, passport number, driver's license number, or another \
 clinic patient number. If they do, call find_patient_by_identifier.
-7. If demographic lookup returns no match and the patient believes they have been seen \
+8. If demographic lookup returns no match and the patient believes they have been seen \
 here before, ask whether they know an MRN, passport number, driver's license number, \
 or another clinic patient number. If they do, call find_patient_by_identifier.
-8. If a strong identifier also fails to produce a single clear match, explain that you \
+8b. If a strong identifier returns a single clear match, ask for explicit confirmation \
+before proceeding. If any key detail on file differs from what the patient told you \
+earlier, point out the discrepancy directly and ask whether it is still their record. \
+Do NOT pretend the details matched.
+9. If a strong identifier also fails to produce a single clear match, explain that you \
 cannot safely verify the record and a staff member will need to help. STOP.
-9. If a returning patient lookup finds no match and they do not know a strong identifier, \
+10. If a returning patient lookup finds no match and they do not know a strong identifier, \
 explain that you could not find an existing record and offer to register them as a new patient.
 
 ## Rules
 - Do NOT greet the patient — they've already been greeted.
+- Do NOT ask whether the patient is new or returning when they want to cancel or reschedule an appointment.
 - Ask ONE question per response.
 - Do NOT guess which patient record is correct.
+- Do NOT say a staff member will help, transfer the patient, or hand off the conversation after registration or verification.
+- After successful registration, reply briefly that they are registered, then STOP.
+- After successful returning-patient verification, reply briefly that they are verified, then STOP.
+- NEVER claim the patient is registered or verified unless the corresponding tool lookup/registration succeeded.
 - Start returning-patient lookup with full name and date of birth before asking for stronger identifiers.
 - Always collect full name, date of birth, and phone number during new registration.
 - Accept any non-empty phone number string exactly as the patient provides it.
@@ -180,6 +208,11 @@ name, specialty, full date (day of week + month + day number), and time. \
 Example: "I'll book you with Dr. Rodriguez for neurology on Wednesday, April 22nd \
 at 10:15 AM. Shall I confirm?"
 Step 7: Only call book_appointment AFTER the patient explicitly confirms.
+Step 8: If book_appointment says the slot is no longer available or no longer \
+bookable, tell the patient plainly that the slot was taken and do NOT claim \
+the booking succeeded. Then offer 2-3 other available times. If you no longer \
+have valid alternatives, call find_slots again for the same specialty and \
+preference before answering.
 
 ## When no slots are found
 - If a specific date has no slots, try ONE broader search (drop the day preference).
@@ -263,6 +296,16 @@ patient explicitly confirms.
 _intake_agent: Any | None = None
 _triage_agent: Any | None = None
 _scheduling_agent: Any | None = None
+_HANDOFF_MARKERS = (
+    "staff member",
+    "scheduling team",
+    "scheduling specialist",
+    "will be with you shortly",
+    "will be in touch shortly",
+    "will contact you shortly",
+    "contact you to book",
+    "help with your appointment",
+)
 
 
 def _message_text(content: object) -> str:
@@ -280,6 +323,68 @@ def _message_text(content: object) -> str:
                     text_parts.append(text)
         return "".join(text_parts)
     return ""
+
+
+def _contains_handoff_language(content: object) -> bool:
+    """Return True when an AI message tries to hand the patient off to staff."""
+    normalized = " ".join(_message_text(content).lower().split())
+    return any(marker in normalized for marker in _HANDOFF_MARKERS)
+
+
+def _replace_ai_messages(
+    messages: list[Any],
+    replacement_text: str | None,
+) -> list[Any]:
+    """Keep tool messages but replace patient-facing AI text when needed."""
+    preserved: list[Any] = []
+    for msg in messages:
+        if getattr(msg, "type", None) != "ai":
+            preserved.append(msg)
+            continue
+        if getattr(msg, "tool_calls", None):
+            preserved.append(msg)
+    if replacement_text is not None:
+        preserved.append(AIMessage(content=replacement_text))
+    return preserved
+
+
+def _normalize_specialty_name(name: str) -> str:
+    """Normalize specialty names for loose text matching."""
+    letters_only = re.sub(r"[^a-z0-9]+", " ", name.lower())
+    return " ".join(letters_only.split())
+
+
+def _extract_specialty_candidates(tool_text: str) -> dict[str, str]:
+    """Parse ``list_specialties`` output into a normalized name -> id map."""
+    candidates: dict[str, str] = {}
+    for line in tool_text.splitlines():
+        match = re.match(r"-\s+(.+?)\s+\(ID:\s*([^)]+)\):", line.strip())
+        if not match:
+            continue
+        name, specialty_id = match.groups()
+        normalized_name = _normalize_specialty_name(name)
+        if normalized_name and specialty_id and specialty_id != "N/A":
+            candidates[normalized_name] = specialty_id
+    return candidates
+
+
+def _match_specialty_id_from_text(
+    candidates: dict[str, str],
+    texts: list[str],
+) -> str | None:
+    """Find a specialty id whose name appears in the provided texts."""
+    normalized_text = _normalize_specialty_name(" ".join(texts))
+    if not normalized_text:
+        return None
+
+    matches = [
+        specialty_id
+        for name, specialty_id in candidates.items()
+        if name in normalized_text
+    ]
+    if len(matches) == 1:
+        return matches[0]
+    return None
 
 
 def _parse_patient_payload(content: object) -> dict[str, Any] | None:
@@ -309,42 +414,86 @@ def _patient_identity_from_payload(payload: dict[str, Any]) -> tuple[str, str] |
     return None
 
 
-def _is_affirmative_identity_reply(content: object) -> bool:
-    """Return True when the patient's latest reply confirms a matched record."""
+def _classify_identity_reply(
+    content: object,
+) -> Literal["affirmative", "negative"] | None:
+    """Classify a patient's reply to an identity-confirmation question."""
     normalized = " ".join(_message_text(content).lower().split())
     if not normalized:
-        return False
+        return None
 
     tokens = normalized.split()
 
     negative_tokens = {"no", "nope", "nah"}
     if any(token in tokens for token in negative_tokens):
-        return False
+        return "negative"
 
     negative_phrases = (
         "not me",
+        "that is not me",
+        "that isn't me",
+        "not my record",
+        "is not my record",
+        "isn't my record",
         "wrong person",
         "wrong patient",
         "wrong record",
         "different patient",
     )
     if any(marker in normalized for marker in negative_phrases):
-        return False
+        return "negative"
 
-    affirmative_tokens = {"yes", "yeah", "yep", "yup", "correct"}
+    affirmative_tokens = {"yes", "yeah", "yep", "yup", "correct", "affirmative"}
     if any(token in tokens for token in affirmative_tokens):
-        return True
+        return "affirmative"
 
     affirmative_phrases = (
         "that's me",
         "that is me",
+        "its me",
+        "it's me",
+        "it is me",
         "yes that's me",
         "yes that is me",
+        "that's correct",
+        "that is correct",
+        "that's right",
+        "that is right",
     )
-    return any(marker in normalized for marker in affirmative_phrases)
+    if any(marker in normalized for marker in affirmative_phrases):
+        return "affirmative"
+
+    return None
 
 
-def _confirmed_patient_from_history(messages: list[Any]) -> tuple[str, str] | None:
+async def _classify_identity_reply_with_llm(
+    content: object,
+) -> Literal["affirmative", "negative"] | None:
+    """Use a constrained LLM fallback for identity confirmation replies."""
+    llm = ChatAnthropic(
+        model_name=settings.anthropic_model,
+        api_key=SecretStr(settings.anthropic_api_key),
+        temperature=0,
+        max_tokens_to_sample=10,
+        timeout=None,
+        stop=None,
+    )
+
+    response = await llm.ainvoke(
+        [
+            SystemMessage(content=_IDENTITY_CONFIRMATION_SYSTEM_PROMPT),
+            HumanMessage(content=_message_text(content)),
+        ]
+    )
+
+    raw = _message_text(response.content).strip().lower()
+    if raw in ("affirmative", "negative"):
+        return raw  # type: ignore[return-value]
+
+    return None
+
+
+async def _confirmed_patient_from_history(messages: list[Any]) -> tuple[str, str] | None:
     """Recover the latest matched patient once the human explicitly confirms."""
     latest_human_index: int | None = None
 
@@ -357,19 +506,100 @@ def _confirmed_patient_from_history(messages: list[Any]) -> tuple[str, str] | No
     if latest_human_index is None:
         return None
 
-    latest_human = messages[latest_human_index]
-    if not _is_affirmative_identity_reply(getattr(latest_human, "content", "")):
-        return None
-
+    latest_match: tuple[str, str] | None = None
     for message in reversed(messages[:latest_human_index]):
         if getattr(message, "type", None) != "tool":
             continue
         payload = _parse_patient_payload(getattr(message, "content", ""))
         if payload is None or payload.get("status") != "single_match":
             continue
-        return _patient_identity_from_payload(payload)
+        latest_match = _patient_identity_from_payload(payload)
+        if latest_match is not None:
+            break
 
-    return None
+    if latest_match is None:
+        return None
+
+    latest_human = messages[latest_human_index]
+    reply_class = _classify_identity_reply(getattr(latest_human, "content", ""))
+    if reply_class is None:
+        reply_class = await _classify_identity_reply_with_llm(
+            getattr(latest_human, "content", "")
+        )
+
+    if reply_class != "affirmative":
+        return None
+
+    return latest_match
+
+
+def _format_birth_date_for_confirmation(value: object) -> str | None:
+    """Format a stored ISO birth date into a patient-friendly readback."""
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    return f"{parsed.strftime('%B')} {parsed.day}, {parsed.year}"
+
+
+def _build_confirmation_prompt(
+    *,
+    patient_name: str,
+    lookup_method: str | None,
+    record_dob: str | None,
+    phone_last4: object = None,
+    demographics_failed_before_identifier: bool = False,
+) -> str:
+    """Build a natural, consistent confirmation prompt for a matched record."""
+    if lookup_method == "identifier":
+        if demographics_failed_before_identifier and record_dob is not None:
+            return (
+                f"I found a record for {patient_name} using that identifier. "
+                f"The date of birth on file is {record_dob}, which is different "
+                "from what you told me earlier. Is that your record?"
+            )
+        if record_dob is not None:
+            return (
+                f"I found {patient_name}, born {record_dob}, using that identifier. "
+                "Is that you?"
+            )
+        if demographics_failed_before_identifier:
+            return (
+                f"I found a record for {patient_name} using that identifier. "
+                "Some details on file differ from what you told me earlier. "
+                "Is that your record?"
+            )
+        return (
+            f"I found a record for {patient_name} using that identifier. "
+            "Is that your record?"
+        )
+
+    if record_dob is not None and isinstance(phone_last4, str) and phone_last4.strip():
+        return (
+            f"I found {patient_name}, born {record_dob}, ending in phone {phone_last4}. "
+            "Is that you?"
+        )
+    if record_dob is not None:
+        return f"I found {patient_name}, born {record_dob}. Is that you?"
+    return f"I found {patient_name} on file. Is that you?"
+
+
+def _history_has_demographics_no_match(messages: list[Any]) -> bool:
+    """Return True when demographics failed earlier in the current intake flow."""
+    for message in reversed(messages):
+        if getattr(message, "type", None) != "tool":
+            continue
+        payload = _parse_patient_payload(getattr(message, "content", ""))
+        if payload is None:
+            continue
+        if (
+            payload.get("status") == "no_match"
+            and payload.get("lookup_method") == "demographics"
+        ):
+            return True
+    return False
 
 
 def _get_intake_agent() -> Any:
@@ -448,23 +678,94 @@ async def intake_node(state: AgentState) -> dict:
     patient_id = state.get("patient_id")
     patient_name = state.get("patient_name")
 
+    confirmed_patient: tuple[str, str] | None = None
+
     if patient_id is None:
-        confirmed_patient = _confirmed_patient_from_history(state["messages"])
+        confirmed_patient = await _confirmed_patient_from_history(state["messages"])
         if confirmed_patient is not None:
             patient_id, patient_name = confirmed_patient
+
+    demographics_failed_before_identifier = _history_has_demographics_no_match(
+        state["messages"]
+    )
+    confirmation_prompt_text: str | None = None
+    registration_succeeded = False
+    existing_record_reused = False
 
     for msg in fresh_messages:
         if not hasattr(msg, "type") or msg.type != "tool":
             continue
 
         payload = _parse_patient_payload(msg.content)
-        if payload is None or payload.get("status") != "registered":
+        if payload is None:
             continue
 
+        status = payload.get("status")
+        lookup_method = payload.get("lookup_method")
+        if status == "single_match":
+            parsed_identity = _patient_identity_from_payload(payload)
+            if parsed_identity is None:
+                continue
+            _matched_patient_id, matched_patient_name = parsed_identity
+            patient = payload.get("patient")
+            record_dob = None
+            phone_last4 = None
+            if isinstance(patient, dict):
+                record_dob = _format_birth_date_for_confirmation(
+                    patient.get("date_of_birth")
+                )
+                phone_last4 = patient.get("phone_last4")
+            confirmation_prompt_text = _build_confirmation_prompt(
+                patient_name=matched_patient_name,
+                lookup_method=lookup_method if isinstance(lookup_method, str) else None,
+                record_dob=record_dob,
+                phone_last4=phone_last4,
+                demographics_failed_before_identifier=demographics_failed_before_identifier,
+            )
+            continue
+        if status not in ("registered", "already_exists"):
+            continue
         parsed_identity = _patient_identity_from_payload(payload)
         if parsed_identity is None:
             continue
         patient_id, patient_name = parsed_identity
+        if status == "registered":
+            registration_succeeded = True
+        else:
+            existing_record_reused = True
+
+    confirmed_this_turn = (
+        confirmed_patient is not None
+        and state.get("patient_id") is None
+    )
+
+    if confirmation_prompt_text is not None:
+        fresh_messages = _replace_ai_messages(
+            fresh_messages,
+            confirmation_prompt_text,
+        )
+    elif registration_succeeded:
+        fresh_messages = _replace_ai_messages(
+            fresh_messages,
+            "Perfect! You're all registered.",
+        )
+    elif existing_record_reused and any(
+        _contains_handoff_language(getattr(msg, "content", ""))
+        for msg in fresh_messages
+        if getattr(msg, "type", None) == "ai"
+    ):
+        fresh_messages = _replace_ai_messages(
+            fresh_messages,
+            "You're already in our system. You're all set.",
+        )
+    elif confirmed_this_turn:
+        if state.get("intent") in ("book", "reschedule", "cancel"):
+            fresh_messages = _replace_ai_messages(fresh_messages, None)
+        else:
+            fresh_messages = _replace_ai_messages(
+                fresh_messages,
+                "Great! You're verified.",
+            )
 
     return {
         "messages": fresh_messages,
@@ -495,19 +796,32 @@ async def triage_node(state: AgentState) -> dict:
 
     specialty_id = state.get("specialty_id")
     symptoms = list(state.get("symptoms", []))
+    specialty_candidates: dict[str, str] = {}
+    ai_texts: list[str] = []
+    human_texts = [
+        _message_text(getattr(msg, "content", ""))
+        for msg in state["messages"]
+        if getattr(msg, "type", None) == "human"
+    ]
 
     for msg in fresh_messages:
         if not hasattr(msg, "type"):
             continue
 
         # ── Extract specialty from triage tool results ───
-        if msg.type == "tool" and "(ID: " in msg.content:
-            lines = msg.content.split("\n")
+        if msg.type == "tool":
+            tool_text = _message_text(msg.content)
+            specialty_candidates.update(_extract_specialty_candidates(tool_text))
+            if "(ID: " not in tool_text:
+                continue
+            lines = tool_text.split("\n")
             for line in lines:
                 if "(ID: " in line and ("score" in line or "similarity" in line):
                     id_start = line.index("(ID: ") + 5
                     id_end = line.index(")", id_start)
-                    specialty_id = line[id_start:id_end].strip()
+                    parsed_id = line[id_start:id_end].strip()
+                    if parsed_id and parsed_id != "N/A":
+                        specialty_id = parsed_id
                     break
 
         # ── Extract symptoms from tool call arguments ────
@@ -516,11 +830,27 @@ async def triage_node(state: AgentState) -> dict:
         # get the structured symptom list the LLM extracted
         # from the patient's description.
         if msg.type == "ai" and hasattr(msg, "tool_calls"):
+            ai_texts.append(_message_text(msg.content))
             for tc in msg.tool_calls:
                 if tc["name"] == "triage_symptoms":
                     args = tc.get("args", {})
                     if "symptoms" in args:
                         symptoms = args["symptoms"]
+        elif msg.type == "ai":
+            ai_texts.append(_message_text(msg.content))
+
+    if specialty_id is None and specialty_candidates:
+        specialty_id = _match_specialty_id_from_text(
+            specialty_candidates,
+            ai_texts + human_texts,
+        )
+
+    if specialty_id is not None and any(
+        _contains_handoff_language(getattr(msg, "content", ""))
+        for msg in fresh_messages
+        if getattr(msg, "type", None) == "ai"
+    ):
+        fresh_messages = _replace_ai_messages(fresh_messages, None)
 
     return {
         "messages": fresh_messages,

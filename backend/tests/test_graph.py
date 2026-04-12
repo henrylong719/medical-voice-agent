@@ -66,12 +66,52 @@ def test_get_or_build_graph_compiles_once(monkeypatch: MonkeyPatch) -> None:
     monkeypatch.setattr(graph, "_get_checkpointer", fake_get_checkpointer)
     monkeypatch.setattr(graph, "_build_graph", lambda: builder)
 
-    first = asyncio.run(graph._get_or_build_graph())
-    second = asyncio.run(graph._get_or_build_graph())
+    async def run_twice() -> tuple[str, str]:
+        first = await graph._get_or_build_graph()
+        second = await graph._get_or_build_graph()
+        return first, second
+
+    first, second = asyncio.run(run_twice())
 
     assert first == "compiled-graph"
     assert second == "compiled-graph"
     assert builder.compile_calls == ["checkpointer"]
+
+
+def test_get_or_build_graph_rebuilds_after_event_loop_change(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    class FakeBuilder:
+        def __init__(self) -> None:
+            self.compile_calls: list[object] = []
+
+        def compile(self, *, checkpointer: object) -> str:
+            self.compile_calls.append(checkpointer)
+            return f"compiled-{len(self.compile_calls)}"
+
+    builder = FakeBuilder()
+    checkpointers = iter(["checkpointer-1", "checkpointer-2"])
+
+    async def fake_get_checkpointer() -> str:
+        return next(checkpointers)
+
+    async def fake_cleanup() -> None:
+        graph._graph = None
+        graph._graph_loop = None
+
+    monkeypatch.setattr(graph, "_graph", None)
+    monkeypatch.setattr(graph, "_graph_loop", None)
+    monkeypatch.setattr(graph.settings, "anthropic_api_key", "test-key", raising=False)
+    monkeypatch.setattr(graph, "_get_checkpointer", fake_get_checkpointer)
+    monkeypatch.setattr(graph, "_build_graph", lambda: builder)
+    monkeypatch.setattr(graph, "cleanup_checkpointer", fake_cleanup)
+
+    first = asyncio.run(graph._get_or_build_graph())
+    second = asyncio.run(graph._get_or_build_graph())
+
+    assert first == "compiled-1"
+    assert second == "compiled-2"
+    assert builder.compile_calls == ["checkpointer-1", "checkpointer-2"]
 
 
 def test_cleanup_checkpointer_clears_cached_state(monkeypatch: MonkeyPatch) -> None:
@@ -85,14 +125,18 @@ def test_cleanup_checkpointer_clears_cached_state(monkeypatch: MonkeyPatch) -> N
     stack = FakeStack()
     monkeypatch.setattr(graph, "_checkpointer_stack", stack)
     monkeypatch.setattr(graph, "_checkpointer", "checkpointer")
+    monkeypatch.setattr(graph, "_checkpointer_loop", object())
     monkeypatch.setattr(graph, "_graph", "compiled-graph")
+    monkeypatch.setattr(graph, "_graph_loop", object())
 
     asyncio.run(graph.cleanup_checkpointer())
 
     assert stack.closed is True
     assert graph._checkpointer_stack is None
     assert graph._checkpointer is None
+    assert graph._checkpointer_loop is None
     assert graph._graph is None
+    assert graph._graph_loop is None
 
 
 def test_stream_agent_response_yields_only_text_chunks(monkeypatch: MonkeyPatch) -> None:

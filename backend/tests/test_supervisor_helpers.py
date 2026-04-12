@@ -127,6 +127,14 @@ def test_identity_correction_wrong_record() -> None:
     assert supervisor._looks_like_identity_correction(_msg("wrong record")) is True
 
 
+def test_identity_correction_not_my_record() -> None:
+    assert supervisor._looks_like_identity_correction(_msg("That's not my record")) is True
+
+
+def test_identity_correction_wrong_date_of_birth() -> None:
+    assert supervisor._looks_like_identity_correction(_msg("That's the wrong date of birth")) is True
+
+
 def test_identity_correction_normal_message() -> None:
     assert supervisor._looks_like_identity_correction(_msg("yes that's me")) is False
 
@@ -175,6 +183,10 @@ def test_classify_status_been_there_before() -> None:
     assert supervisor._classify_patient_status(_msg("I've been there before")) == "returning"
 
 
+def test_classify_status_came_before() -> None:
+    assert supervisor._classify_patient_status(_msg("I came before")) == "returning"
+
+
 def test_classify_status_yes() -> None:
     assert supervisor._classify_patient_status(_msg("Yes")) == "returning"
 
@@ -189,6 +201,44 @@ def test_classify_status_ambiguous() -> None:
 
 def test_classify_status_empty() -> None:
     assert supervisor._classify_patient_status(_msg("")) is None
+
+
+def test_classify_status_with_llm_returns_normalized_label(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    class FakeLLM:
+        def __init__(self, **kwargs: Any) -> None:
+            self.kwargs = kwargs
+
+        async def ainvoke(self, messages: list[object]):
+            return type("Response", (), {"content": [{"text": " Returning "}]})()
+
+    monkeypatch.setattr(supervisor, "ChatAnthropic", FakeLLM)
+
+    result = asyncio.run(
+        supervisor._classify_patient_status_with_llm(_msg("I used to come here"))
+    )
+
+    assert result == "returning"
+
+
+def test_classify_status_with_llm_returns_none_for_unknown(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    class FakeLLM:
+        def __init__(self, **kwargs: Any) -> None:
+            self.kwargs = kwargs
+
+        async def ainvoke(self, messages: list[object]):
+            return type("Response", (), {"content": "unknown"})()
+
+    monkeypatch.setattr(supervisor, "ChatAnthropic", FakeLLM)
+
+    result = asyncio.run(
+        supervisor._classify_patient_status_with_llm(_msg("maybe"))
+    )
+
+    assert result is None
 
 
 # ============================================================
@@ -214,6 +264,13 @@ def test_intent_switch_with_rather() -> None:
         _msg("I'd rather just cancel it"),
         "book",
     ) is True
+
+
+def test_intent_switch_marker_without_new_intent_not_detected() -> None:
+    assert supervisor._looks_like_explicit_intent_switch(
+        _msg("Actually, yes that sounds good"),
+        "book",
+    ) is False
 
 
 def test_intent_switch_different_keyword() -> None:
@@ -243,6 +300,64 @@ def test_intent_switch_empty_message() -> None:
         _msg(""),
         "book",
     ) is False
+
+
+def test_intent_switch_review_for_move_this_appointment() -> None:
+    assert supervisor._may_need_intent_switch_review(
+        _msg("I need to move this appointment"),
+        "book",
+    ) is True
+
+
+def test_intent_switch_review_ignores_booking_detail_clarification() -> None:
+    assert supervisor._may_need_intent_switch_review(
+        _msg("Actually, next week works better"),
+        "book",
+    ) is False
+
+
+def test_classify_intent_switch_with_llm_returns_normalized_label(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    class FakeLLM:
+        def __init__(self, **kwargs: Any) -> None:
+            self.kwargs = kwargs
+
+        async def ainvoke(self, messages: list[object]):
+            return type("Response", (), {"content": [{"text": " ReSchedule "}]})()
+
+    monkeypatch.setattr(supervisor, "ChatAnthropic", FakeLLM)
+
+    result = asyncio.run(
+        supervisor._classify_intent_switch_with_llm(
+            _msg("Could we move this appointment to another day?"),
+            "book",
+        )
+    )
+
+    assert result == "reschedule"
+
+
+def test_classify_intent_switch_with_llm_returns_none_for_no_switch(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    class FakeLLM:
+        def __init__(self, **kwargs: Any) -> None:
+            self.kwargs = kwargs
+
+        async def ainvoke(self, messages: list[object]):
+            return type("Response", (), {"content": "none"})()
+
+    monkeypatch.setattr(supervisor, "ChatAnthropic", FakeLLM)
+
+    result = asyncio.run(
+        supervisor._classify_intent_switch_with_llm(
+            _msg("Actually, next week works better"),
+            "book",
+        )
+    )
+
+    assert result is None
 
 
 # ============================================================
@@ -360,6 +475,19 @@ def test_awaiting_status_after_visit_question() -> None:
     assert supervisor._awaiting_patient_status_answer(state) is True
 
 
+def test_awaiting_status_after_visit_question_with_variant_punctuation() -> None:
+    state = _state(
+        messages=[
+            HumanMessage(content="I want to book"),
+            AIMessage(
+                content="Have you been seen at this clinic before or is this your first visit today?"
+            ),
+            HumanMessage(content="yes"),
+        ]
+    )
+    assert supervisor._awaiting_patient_status_answer(state) is True
+
+
 def test_awaiting_status_after_different_question() -> None:
     state = _state(
         messages=[
@@ -374,6 +502,28 @@ def test_awaiting_status_after_different_question() -> None:
 def test_awaiting_status_no_ai_message() -> None:
     state = _state(messages=[HumanMessage(content="hi")])
     assert supervisor._awaiting_patient_status_answer(state) is False
+
+
+def test_identity_correction_llm_fallback_returns_true(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    class FakeLLM:
+        def __init__(self, **kwargs: Any) -> None:
+            self.kwargs = kwargs
+
+        async def ainvoke(self, messages: list[object]):
+            return type("Response", (), {"content": [{"text": " correction "}]})()
+
+    monkeypatch.setattr(supervisor, "ChatAnthropic", FakeLLM)
+
+    result = asyncio.run(
+        supervisor._classify_identity_correction_with_llm(
+            AIMessage(content="I found Sarah Connor on file — is that you?"),
+            _msg("The date of birth is wrong"),
+        )
+    )
+
+    assert result is True
 
 
 # ============================================================

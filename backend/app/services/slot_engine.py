@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, time, timedelta, timezone
+import re
 from typing import cast
 
 from app.config import settings
@@ -45,6 +46,11 @@ NEXT_AVAILABLE_ALIASES = {
     "next available", "next available day", "next available date",
     "soonest", "earliest", "earliest available", "first available",
     "as soon as possible", "asap",
+    "soonest available", "no preference", "flexible", "im flexible",
+    "i'm flexible", "any day", "any day works", "whenever",
+    "whatever is available", "whatever is open", "whatever's available",
+    "whatever's open", "whats available", "what's available",
+    "anything available", "anything open",
 }
 
 # Day-of-week enum values in our DB → Python weekday numbers
@@ -76,6 +82,105 @@ class Slot:
             "label": format_for_voice(self.start_at),
             "date_label": format_date_for_voice(self.start_at),
         }
+
+
+def _normalize_preferred_day_text(preferred_day: str | None) -> str:
+    """Normalize free-text day preferences for alias detection."""
+    normalized = (preferred_day or "").strip().lower().replace("’", "'")
+    normalized = re.sub(r"[^a-z0-9\s'/:-]", " ", normalized)
+    normalized = re.sub(r"\s+", " ", normalized)
+    return normalized.strip()
+
+
+def _looks_like_specific_day_request(normalized: str) -> bool:
+    """Return True when the text contains a concrete day or date hint."""
+    if not normalized:
+        return False
+
+    specific_markers = (
+        "today",
+        "tomorrow",
+        "tmr",
+        "tommorow",
+        "this week",
+        "next week",
+        "weekend",
+        "mon",
+        "monday",
+        "tue",
+        "tues",
+        "tuesday",
+        "wed",
+        "weds",
+        "wednesday",
+        "thu",
+        "thur",
+        "thurs",
+        "thursday",
+        "fri",
+        "friday",
+        "sat",
+        "saturday",
+        "sun",
+        "sunday",
+        "jan",
+        "january",
+        "feb",
+        "february",
+        "mar",
+        "march",
+        "apr",
+        "april",
+        "may",
+        "jun",
+        "june",
+        "jul",
+        "july",
+        "aug",
+        "august",
+        "sep",
+        "sept",
+        "september",
+        "oct",
+        "october",
+        "nov",
+        "november",
+        "dec",
+        "december",
+    )
+    if any(re.search(rf"\b{re.escape(marker)}\b", normalized) for marker in specific_markers):
+        return True
+
+    return bool(
+        re.search(r"\b\d{1,2}/\d{1,2}(?:/\d{2,4})?\b", normalized)
+        or re.search(r"\b\d+\s*weeks?\b", normalized)
+    )
+
+
+def _is_next_available_preference(preferred_day: str | None) -> bool:
+    """Return True when the patient is asking for the soonest open day."""
+    normalized = _normalize_preferred_day_text(preferred_day)
+    if not normalized:
+        return False
+    if normalized in NEXT_AVAILABLE_ALIASES:
+        return True
+    if _looks_like_specific_day_request(normalized):
+        return False
+    return any(
+        marker in normalized
+        for marker in (
+            "soonest",
+            "earliest",
+            "as soon as possible",
+            "asap",
+            "flexible",
+            "no preference",
+            "any day",
+            "whenever",
+            "available",
+            "open",
+        )
+    )
 
 
 # ============================================================
@@ -276,8 +381,8 @@ def _compute_available_slots(
     bucket = parse_time_bucket(preferred_time)
 
     # Determine search window
-    day_raw = (preferred_day or "").strip().lower()
-    if not day_raw or day_raw in NEXT_AVAILABLE_ALIASES:
+    day_raw = _normalize_preferred_day_text(preferred_day)
+    if not day_raw or _is_next_available_preference(day_raw):
         # No preference or "next available" → search the full horizon
         utc_start, utc_end = now, horizon
     else:

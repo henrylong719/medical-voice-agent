@@ -59,9 +59,118 @@ def test_intake_node_extracts_registered_patient_identity(
     result = asyncio.run(agents.intake_node(state))
 
     assert fake_agent.calls == [{"messages": state["messages"]}]
-    assert result["messages"] == new_messages[1:]
+    assert getattr(result["messages"][0], "type", None) == "tool"
+    assert result["messages"][-1].content == "Perfect! You're all registered."
     assert result["patient_id"] == "patient-1"
     assert result["patient_name"] == "Sarah Connor"
+
+
+def test_intake_node_replaces_registration_handoff_with_concise_confirmation(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    state = _base_state()
+    new_messages = state["messages"] + [
+        AIMessage(
+            content="Let me get you registered.",
+            tool_calls=[
+                {
+                    "name": "register_patient",
+                    "args": {
+                        "full_name": "Sarah Connor",
+                        "date_of_birth": "1985-10-26",
+                        "phone": "555-0100",
+                    },
+                    "id": "call-1",
+                    "type": "tool_call",
+                }
+            ],
+        ),
+        ToolMessage(
+            content=json.dumps(
+                {
+                    "status": "registered",
+                    "message": "Patient registered successfully.",
+                    "patient": {
+                        "patient_id": "patient-1",
+                        "full_name": "Sarah Connor",
+                        "date_of_birth": "1985-10-26",
+                        "phone_last4": "0100",
+                        "email": None,
+                        "allergies": [],
+                    },
+                }
+            ),
+            tool_call_id="call-1",
+        ),
+        AIMessage(content="Perfect! You're all registered. A staff member will be with you shortly."),
+    ]
+    fake_agent = FakeAsyncAgent({"messages": new_messages})
+    monkeypatch.setattr(agents, "_get_intake_agent", lambda: fake_agent)
+
+    result = asyncio.run(agents.intake_node(state))
+
+    assert getattr(result["messages"][0], "type", None) == "ai"
+    assert result["messages"][0].tool_calls[0]["name"] == "register_patient"
+    assert result["messages"][-1].content == "Perfect! You're all registered."
+    assert all(
+        "staff member" not in getattr(msg, "content", "")
+        for msg in result["messages"]
+        if getattr(msg, "type", None) == "ai"
+    )
+
+
+def test_intake_node_reuses_existing_record_after_registration_attempt(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    state = _base_state()
+    new_messages = state["messages"] + [
+        AIMessage(
+            content="Let me check that registration.",
+            tool_calls=[
+                {
+                    "name": "register_patient",
+                    "args": {
+                        "full_name": "Sarah Connor",
+                        "date_of_birth": "1985-10-26",
+                        "phone": "555-0100",
+                    },
+                    "id": "call-1",
+                    "type": "tool_call",
+                }
+            ],
+        ),
+        ToolMessage(
+            content=json.dumps(
+                {
+                    "status": "already_exists",
+                    "message": "A matching patient already exists.",
+                    "patient": {
+                        "patient_id": "patient-1",
+                        "full_name": "Sarah Connor",
+                        "date_of_birth": "1985-10-26",
+                        "phone_last4": "0100",
+                        "email": None,
+                        "allergies": [],
+                    },
+                }
+            ),
+            tool_call_id="call-1",
+        ),
+        AIMessage(content="You're already in our system. A staff member will be with you shortly."),
+    ]
+    fake_agent = FakeAsyncAgent({"messages": new_messages})
+    monkeypatch.setattr(agents, "_get_intake_agent", lambda: fake_agent)
+
+    result = asyncio.run(agents.intake_node(state))
+
+    assert result["patient_id"] == "patient-1"
+    assert result["patient_name"] == "Sarah Connor"
+    assert result["messages"][-1].content == "You're already in our system. You're all set."
+    assert all(
+        "staff member" not in getattr(msg, "content", "")
+        for msg in result["messages"]
+        if getattr(msg, "type", None) == "ai"
+    )
 
 
 def test_intake_node_waits_for_patient_confirmation_before_setting_identity(
@@ -94,7 +203,21 @@ def test_intake_node_waits_for_patient_confirmation_before_setting_identity(
 
     result = asyncio.run(agents.intake_node(state))
 
-    assert result["messages"] == new_messages[1:]
+    assert result["messages"][0].content == json.dumps(
+        {
+            "status": "single_match",
+            "message": "One patient matched those demographics.",
+            "patient": {
+                "patient_id": "patient-1",
+                "full_name": "Sarah Connor",
+                "date_of_birth": "1985-10-26",
+                "phone_last4": None,
+                "email": None,
+                "allergies": [],
+            },
+        }
+    )
+    assert result["messages"][-1].content == "I found Sarah Connor, born October 26, 1985. Is that you?"
     assert result["patient_id"] is None
     assert result["patient_name"] is None
 
@@ -138,9 +261,176 @@ def test_intake_node_promotes_lookup_after_patient_confirms(
 
     result = asyncio.run(agents.intake_node(state))
 
-    assert result["messages"] == returned_messages[len(state["messages"]) :]
+    assert result["messages"][-1].content == "Great! You're verified."
     assert result["patient_id"] == "patient-1"
     assert result["patient_name"] == "Sarah Connor"
+
+
+def test_intake_node_promotes_lookup_after_llm_confirmed_identity_reply(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    state = _base_state()
+    state["messages"] = [
+        HumanMessage(content="I have headaches"),
+        AIMessage(
+            content="Can you share your full name and date of birth so I can look you up?"
+        ),
+        HumanMessage(content="Sarah Connor, October 26 1985"),
+        AIMessage(content="Thanks! Let me look that up."),
+        ToolMessage(
+            content=json.dumps(
+                {
+                    "status": "single_match",
+                    "message": "One patient matched those demographics.",
+                    "patient": {
+                        "patient_id": "patient-1",
+                        "full_name": "Sarah Connor",
+                        "date_of_birth": "1985-10-26",
+                        "phone_last4": None,
+                        "email": None,
+                        "allergies": [],
+                    },
+                }
+            ),
+            tool_call_id="call-1",
+        ),
+        AIMessage(content="I found Sarah Connor born on 1985-10-26 on file — is that you?"),
+        HumanMessage(content="It is me"),
+    ]
+    returned_messages = state["messages"] + [
+        AIMessage(content="Thank you. Let's keep going."),
+    ]
+    fake_agent = FakeAsyncAgent({"messages": returned_messages})
+    monkeypatch.setattr(agents, "_get_intake_agent", lambda: fake_agent)
+
+    async def fake_classify_identity_reply_with_llm(
+        content: object,
+    ) -> str | None:
+        assert content == "It is me"
+        return "affirmative"
+
+    monkeypatch.setattr(
+        agents,
+        "_classify_identity_reply_with_llm",
+        fake_classify_identity_reply_with_llm,
+    )
+
+    result = asyncio.run(agents.intake_node(state))
+
+    assert result["patient_id"] == "patient-1"
+    assert result["patient_name"] == "Sarah Connor"
+
+
+def test_intake_node_replaces_verification_handoff_with_concise_confirmation(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    state = _base_state()
+    state["messages"] = [
+        HumanMessage(content="Alice Johnson, May 14 1992"),
+        ToolMessage(
+            content=json.dumps(
+                {
+                    "status": "single_match",
+                    "message": "One patient matched those demographics.",
+                    "patient": {
+                        "patient_id": "patient-1",
+                        "full_name": "Alice Johnson",
+                        "date_of_birth": "1992-05-14",
+                        "phone_last4": "1001",
+                        "email": None,
+                        "allergies": [],
+                    },
+                }
+            ),
+            tool_call_id="call-1",
+        ),
+        AIMessage(content="I found Alice Johnson born on 1992-05-14 on file — is that you?"),
+        HumanMessage(content="Yes, that's me"),
+    ]
+    returned_messages = state["messages"] + [
+        AIMessage(content="Perfect, you're verified. A staff member will be with you shortly to help."),
+    ]
+    fake_agent = FakeAsyncAgent({"messages": returned_messages})
+    monkeypatch.setattr(agents, "_get_intake_agent", lambda: fake_agent)
+
+    result = asyncio.run(agents.intake_node(state))
+
+    assert result["messages"][-1].content == "Great! You're verified."
+    assert result["patient_id"] == "patient-1"
+
+
+def test_intake_node_suppresses_redundant_verification_message_when_flow_continues(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    state = _base_state()
+    state["intent"] = "book"
+    state["messages"] = [
+        HumanMessage(content="Alice Johnson, May 14 1992"),
+        ToolMessage(
+            content=json.dumps(
+                {
+                    "status": "single_match",
+                    "message": "One patient matched those demographics.",
+                    "patient": {
+                        "patient_id": "patient-1",
+                        "full_name": "Alice Johnson",
+                        "date_of_birth": "1992-05-14",
+                        "phone_last4": "1001",
+                        "email": None,
+                        "allergies": [],
+                    },
+                }
+            ),
+            tool_call_id="call-1",
+        ),
+        AIMessage(content="I found Alice Johnson born on 1992-05-14 on file — is that you?"),
+        HumanMessage(content="Yes, that's me"),
+    ]
+    returned_messages = state["messages"] + [
+        AIMessage(content="You're verified. Thank you!"),
+    ]
+    fake_agent = FakeAsyncAgent({"messages": returned_messages})
+    monkeypatch.setattr(agents, "_get_intake_agent", lambda: fake_agent)
+
+    result = asyncio.run(agents.intake_node(state))
+
+    assert result["messages"] == []
+    assert result["patient_id"] == "patient-1"
+    assert result["patient_name"] == "Alice Johnson"
+
+
+def test_classify_identity_reply_with_llm_returns_affirmative(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    class FakeLLM:
+        def __init__(self, **kwargs: Any) -> None:
+            self.kwargs = kwargs
+
+        async def ainvoke(self, messages: list[object]):
+            return type("Response", (), {"content": [{"text": " affirmative "}]} )()
+
+    monkeypatch.setattr(agents, "ChatAnthropic", FakeLLM)
+
+    result = asyncio.run(agents._classify_identity_reply_with_llm("It is me"))
+
+    assert result == "affirmative"
+
+
+def test_classify_identity_reply_with_llm_returns_none_for_unknown(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    class FakeLLM:
+        def __init__(self, **kwargs: Any) -> None:
+            self.kwargs = kwargs
+
+        async def ainvoke(self, messages: list[object]):
+            return type("Response", (), {"content": "unknown"})()
+
+    monkeypatch.setattr(agents, "ChatAnthropic", FakeLLM)
+
+    result = asyncio.run(agents._classify_identity_reply_with_llm("maybe"))
+
+    assert result is None
 
 
 def test_intake_node_keeps_identity_unset_for_multiple_demographic_matches(
@@ -205,10 +495,10 @@ def test_intake_node_keeps_identity_unset_for_no_match_returning_lookup(
                 {
                     "status": "no_match",
                     "message": (
-                        "No patient matched that name and date of birth. Ask for a phone "
-                        "number if you do not have one yet. If that still fails, ask for "
-                        "a stronger identifier or offer registration if this may be their "
-                        "first visit."
+                        "No patient matched that name and date of birth. Ask for a stronger "
+                        "identifier such as MRN, passport number, driver's license number, "
+                        "or clinic patient number. If they do not know one, then offer "
+                        "registration if this may be their first visit."
                     ),
                     "lookup_method": "demographics",
                 }
@@ -227,10 +517,108 @@ def test_intake_node_keeps_identity_unset_for_no_match_returning_lookup(
     assert result["patient_name"] is None
 
 
+def test_intake_node_clarifies_identifier_match_after_demographics_discrepancy(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    state = _base_state()
+    state["messages"] = [
+        HumanMessage(content="Emma Davis"),
+        AIMessage(content="What is your date of birth?"),
+        HumanMessage(content="January 31, 1990"),
+        AIMessage(content="Let me check that."),
+        ToolMessage(
+            content=json.dumps(
+                {
+                    "status": "no_match",
+                    "message": "No patient matched that name and date of birth.",
+                    "lookup_method": "demographics",
+                }
+            ),
+            tool_call_id="call-demographics",
+        ),
+        AIMessage(content="Do you know your clinic patient number?"),
+        HumanMessage(content="My clinic patient number is CLINIC-9005"),
+    ]
+    new_messages = state["messages"] + [
+        AIMessage(
+            content="Let me look that up.",
+            tool_calls=[
+                {
+                    "name": "find_patient_by_identifier",
+                    "args": {
+                        "identifier_type": "clinic_patient_number",
+                        "identifier_value": "CLINIC-9005",
+                    },
+                    "id": "call-identifier",
+                    "type": "tool_call",
+                }
+            ],
+        ),
+        ToolMessage(
+            content=json.dumps(
+                {
+                    "status": "single_match",
+                    "message": "One patient matched that identifier.",
+                    "patient": {
+                        "patient_id": "patient-1",
+                        "full_name": "Emma Davis",
+                        "date_of_birth": "1990-01-30",
+                        "phone_last4": "1005",
+                        "email": "emma.d@example.com",
+                        "allergies": [],
+                    },
+                    "lookup_method": "identifier",
+                    "matched_identifier": {
+                        "identifier_type": "clinic_patient_number",
+                        "identifier_value_masked": "*******9005",
+                    },
+                }
+            ),
+            tool_call_id="call-identifier",
+        ),
+        AIMessage(content="Perfect! I found your record. Is that you?"),
+    ]
+    fake_agent = FakeAsyncAgent({"messages": new_messages})
+    monkeypatch.setattr(agents, "_get_intake_agent", lambda: fake_agent)
+
+    result = asyncio.run(agents.intake_node(state))
+
+    assert result["patient_id"] is None
+    assert result["patient_name"] is None
+    assert result["messages"][-1].content == (
+        "I found a record for Emma Davis using that identifier. "
+        "The date of birth on file is January 30, 1990, which is different "
+        "from what you told me earlier. "
+        "Is that your record?"
+    )
+
+
 def test_intake_prompt_requires_phone_before_registration() -> None:
     assert "full name, date of birth, and phone number" in agents._INTAKE_PROMPT
     assert "find_patient_by_identifier" in agents._INTAKE_PROMPT
     assert "find_patients_by_demographics" in agents._INTAKE_PROMPT
+    assert (
+        "If the patient wants to reschedule or cancel an appointment, treat them as a "
+        "returning patient immediately."
+        in agents._INTAKE_PROMPT
+    )
+    assert (
+        "Do NOT tell the patient they are registered unless register_patient has "
+        "succeeded in this turn."
+        in agents._INTAKE_PROMPT
+    )
+    assert (
+        "Do NOT ask whether the patient is new or returning when they want to cancel or reschedule"
+        in agents._INTAKE_PROMPT
+    )
+    assert (
+        "Do NOT say a staff member will help, transfer the patient, or hand off the conversation"
+        in agents._INTAKE_PROMPT
+    )
+    assert (
+        "NEVER claim the patient is registered or verified unless the corresponding tool lookup/registration succeeded."
+        in agents._INTAKE_PROMPT
+    )
     assert (
         "If the patient says they have been seen here before, first collect their full "
         "name and date of birth and call find_patients_by_demographics."
@@ -254,9 +642,14 @@ def test_intake_prompt_requires_phone_before_registration() -> None:
         in agents._INTAKE_PROMPT
     )
     assert (
+        "If a strong identifier returns a single clear match, ask for explicit confirmation"
+        in agents._INTAKE_PROMPT
+    )
+    assert (
         "If a strong identifier also fails to produce a single clear match"
         in agents._INTAKE_PROMPT
     )
+    assert "Do NOT pretend the details matched." in agents._INTAKE_PROMPT
     assert (
         "offer to register them as a new patient"
         in agents._INTAKE_PROMPT
@@ -342,6 +735,51 @@ def test_scheduling_node_extracts_booked_appointment_id(monkeypatch: MonkeyPatch
     assert result["appointment_id"] == "appt-1"
     assert result["selected_appointment_id"] is None
     assert result["intent"] is None
+
+
+def test_triage_node_extracts_specialty_id_from_list_specialties_confirmation(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    state = _base_state()
+    state["messages"] = [HumanMessage(content="Yes, Neurology sounds right.")]
+    new_messages = state["messages"] + [
+        AIMessage(
+            content="Let me check whether we offer neurology here.",
+            tool_calls=[
+                {
+                    "name": "list_specialties",
+                    "args": {},
+                    "id": "call-1",
+                    "type": "tool_call",
+                }
+            ],
+        ),
+        ToolMessage(
+            content=(
+                "Available specialties:\n"
+                "- Cardiology (ID: spec-cardio): Heart care\n"
+                "- Neurology (ID: spec-neuro): Brain and nerves\n"
+            ),
+            tool_call_id="call-1",
+        ),
+        AIMessage(
+            content=(
+                "Great news — we do have a Neurology department! "
+                "A staff member will be in touch shortly to schedule your appointment."
+            )
+        ),
+    ]
+    fake_agent = FakeAsyncAgent({"messages": new_messages})
+    monkeypatch.setattr(agents, "_get_triage_agent", lambda: fake_agent)
+
+    result = asyncio.run(agents.triage_node(state))
+
+    assert result["specialty_id"] == "spec-neuro"
+    assert all(
+        "staff member" not in getattr(msg, "content", "")
+        for msg in result["messages"]
+        if getattr(msg, "type", None) == "ai"
+    )
 
 
 def test_scheduling_node_ignores_stale_booking_tool_messages(monkeypatch: MonkeyPatch) -> None:
@@ -467,3 +905,4 @@ def test_scheduling_prompt_says_unavailable_bucket_before_alternatives() -> None
     assert "If the requested morning/afternoon bucket has no matches, say that before offering alternatives." in agents._SCHEDULING_PROMPT
     assert "Do NOT list times from a different bucket until the patient asks for them or agrees to switch." in agents._SCHEDULING_PROMPT
     assert "Always include the current patient's ID in find_appointment, reschedule_appointment, and cancel_appointment." in agents._SCHEDULING_PROMPT
+    assert "If book_appointment says the slot is no longer available or no longer bookable" in agents._SCHEDULING_PROMPT

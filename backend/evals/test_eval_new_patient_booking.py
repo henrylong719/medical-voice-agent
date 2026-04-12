@@ -97,12 +97,30 @@ Transcript:
 """
 
 
+def _cleanup_eval_patient_rows() -> None:
+    """Remove untagged patient rows created by this eval's real registration flow."""
+    patients = (
+        supabase.table("patients")
+        .select("id")
+        .eq("full_name", EVAL_PATIENT_NAME)
+        .execute()
+    )
+    patient_rows = patients.data or []
+
+    for row in patient_rows:
+        patient_id = row["id"]
+        supabase.table("appointments").delete().eq("patient_id", patient_id).execute()
+        supabase.table("patients").delete().eq("id", patient_id).execute()
+
+
 @pytest.fixture(autouse=True)
 def cleanup():
     """Ensure no leftover eval data before and after."""
     cleanup_by_tag(SCENARIO_TAG)
+    _cleanup_eval_patient_rows()
     yield
     cleanup_by_tag(SCENARIO_TAG)
+    _cleanup_eval_patient_rows()
 
 
 N_RUNS = 3
@@ -116,6 +134,7 @@ async def test_new_patient_booking_end_to_end():
         history = await run_conversation(
             "Hi there!",
             PERSONA,
+            max_turns=24,
         )
 
         # --- Hard assertion 1: exactly one patient with the eval name
@@ -162,6 +181,7 @@ async def test_new_patient_booking_end_to_end():
 
         # Clean up between runs
         cleanup_by_tag(SCENARIO_TAG)
+        _cleanup_eval_patient_rows()
 
     safety_rate, quality_rate = eval_report(
         results,

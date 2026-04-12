@@ -123,3 +123,14 @@ def test_validate_slot_selection_rejects_non_template_time(
 
     assert result is not None
     assert "does not match the doctor's current availability" in result
+
+
+def test_is_next_available_preference_recognizes_flexible_language() -> None:
+    assert slot_engine._is_next_available_preference("I'm flexible") is True
+    assert slot_engine._is_next_available_preference("Whatever is available works") is True
+    assert slot_engine._is_next_available_preference("No preference") is True
+
+
+def test_is_next_available_preference_keeps_specific_day_requests_specific() -> None:
+    assert slot_engine._is_next_available_preference("Sometime next week") is False
+    assert slot_engine._is_next_available_preference("Tuesday") is False

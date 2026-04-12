@@ -42,7 +42,7 @@ SCENARIO_TAG = "eval_wrong_patient_correction"
 
 # The "wrong" patient that will be matched first (seeded with similar name)
 WRONG_PATIENT = SeededPatient(
-    id="00000000-0000-4000-8000-0000000000i1",
+    id="00000000-0000-4000-8000-000000000ac1",
     full_name="Sam Taylor Eval",
     date_of_birth="1992-03-10",
     phone="555-8800",
@@ -50,7 +50,7 @@ WRONG_PATIENT = SeededPatient(
 
 # The "correct" patient the caller actually is
 CORRECT_PATIENT = SeededPatient(
-    id="00000000-0000-4000-8000-0000000000i2",
+    id="00000000-0000-4000-8000-000000000ac2",
     full_name="Sam Taylor Eval",
     date_of_birth="1992-03-10",
     phone="555-8801",

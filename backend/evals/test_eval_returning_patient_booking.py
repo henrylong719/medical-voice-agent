@@ -122,6 +122,7 @@ async def test_returning_patient_booking():
         history = await run_conversation(
             "I need to book an appointment.",
             PERSONA,
+            max_turns=20,
         )
 
         # --- Hard assertion 1: no duplicate Alice patient row

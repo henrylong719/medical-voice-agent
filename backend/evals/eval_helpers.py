@@ -10,17 +10,23 @@ Provides:
 """
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
+from inspect import isawaitable
 import json
 import uuid
 from dataclasses import dataclass
+from json import JSONDecodeError
 
 from langchain_anthropic import ChatAnthropic
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from pydantic import SecretStr
 
+from app.config import settings
 from app.agent.graph import invoke_agent
 from app.supabase_client import supabase
 
 MAX_TURNS = 14
+ConversationHook = Callable[[list[dict]], Awaitable[None] | None]
 
 
 @dataclass(frozen=True)
@@ -35,12 +41,28 @@ class SeededPatient:
 # Simulated user
 # ---------------------------------------------------------------------------
 
+def build_eval_llm(*, model: str, max_tokens: int) -> ChatAnthropic:
+    """Build an eval LLM using the app's configured Anthropic key."""
+    api_key = settings.anthropic_api_key.strip()
+    if not api_key:
+        raise RuntimeError(
+            "ANTHROPIC_API_KEY is not configured in backend/.env, so evals "
+            "cannot run."
+        )
+
+    return ChatAnthropic(
+        model=model,
+        api_key=SecretStr(api_key),
+        max_tokens=max_tokens,
+    )
+
+
 def simulate_user_turn(
     persona_prompt: str,
     history: list[dict],
 ) -> str:
     """Drive one user turn using an LLM with the given persona."""
-    llm = ChatAnthropic(model="claude-sonnet-4-6", max_tokens=200)
+    llm = build_eval_llm(model="claude-sonnet-4-6", max_tokens=200)
     messages: list = [SystemMessage(content=persona_prompt)]
     for turn in history:
         if turn["role"] == "agent":
@@ -60,6 +82,7 @@ async def run_conversation(
     persona_prompt: str,
     *,
     max_turns: int = MAX_TURNS,
+    after_agent_turn: ConversationHook | None = None,
     stop_phrases: tuple[str, ...] = (
         "anything else",
         "have a good",
@@ -76,6 +99,11 @@ async def run_conversation(
         history.append({"role": "user", "content": user_msg})
         agent_reply = await invoke_agent(user_msg, thread_id=thread_id)
         history.append({"role": "agent", "content": agent_reply})
+
+        if after_agent_turn is not None:
+            hook_result = after_agent_turn(history)
+            if isawaitable(hook_result):
+                await hook_result
 
         lowered = agent_reply.lower()
         if any(s in lowered for s in stop_phrases):
@@ -95,11 +123,35 @@ def judge_transcript(rubric_prompt: str, history: list[dict]) -> dict:
     transcript = "\n".join(
         f"{turn['role'].upper()}: {turn['content']}" for turn in history
     )
-    llm = ChatAnthropic(model="claude-opus-4-6", max_tokens=600)
+    llm = build_eval_llm(model="claude-opus-4-6", max_tokens=600)
     result = llm.invoke([HumanMessage(content=rubric_prompt + transcript)])
     raw = result.content if isinstance(result.content, str) else str(result.content)
-    raw = raw.strip().removeprefix("```json").removeprefix("```").removesuffix("```")
-    return json.loads(raw)
+    return parse_judge_json(raw)
+
+
+def parse_judge_json(raw: str) -> dict:
+    """Parse judge output, tolerating code fences or trailing commentary."""
+    cleaned = raw.strip()
+    cleaned = cleaned.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+
+    try:
+        return json.loads(cleaned)
+    except JSONDecodeError:
+        pass
+
+    decoder = json.JSONDecoder()
+    first_brace = cleaned.find("{")
+    while first_brace != -1:
+        try:
+            parsed, _end = decoder.raw_decode(cleaned[first_brace:])
+        except JSONDecodeError:
+            first_brace = cleaned.find("{", first_brace + 1)
+            continue
+        if isinstance(parsed, dict):
+            return parsed
+        first_brace = cleaned.find("{", first_brace + 1)
+
+    raise JSONDecodeError("Judge output did not contain valid JSON", cleaned, 0)
 
 
 # ---------------------------------------------------------------------------
@@ -146,9 +198,28 @@ def get_appointment_status(appointment_id: str) -> str | None:
     return rows[0]["status"] if rows else None
 
 
-def print_failed_transcript(run_idx: int, history: list[dict], judgment: dict) -> None:
+def _failed_result_keys(result: dict, keys: tuple[str, ...], *, from_judgment: bool) -> list[str]:
+    """Return the failed boolean keys from either the result dict or its judgment."""
+    source = result.get("judgment", {}) if from_judgment else result
+    if not isinstance(source, dict):
+        return list(keys)
+    return [key for key in keys if not bool(source.get(key, False))]
+
+
+def print_failed_transcript(
+    run_idx: int,
+    history: list[dict],
+    judgment: dict,
+    *,
+    failed_safety_keys: list[str] | None = None,
+    failed_quality_keys: list[str] | None = None,
+) -> None:
     """Print a failed run's transcript for debugging."""
     print(f"\n--- FAILED RUN {run_idx} TRANSCRIPT ---")
+    if failed_safety_keys:
+        print(f"  failed safety checks: {', '.join(failed_safety_keys)}")
+    if failed_quality_keys:
+        print(f"  failed quality checks: {', '.join(failed_quality_keys)}")
     for turn in history:
         print(f"  {turn['role'].upper()}: {turn['content']}")
     print(f"  judgment: {judgment}")
@@ -179,8 +250,30 @@ def eval_report(
     print(f"\nSafety pass rate:  {safety_rate:.0%} ({safety_passes}/{n_runs})")
     print(f"Quality pass rate: {quality_rate:.0%} ({quality_passes}/{n_runs})")
 
-    for r in results:
-        if not all(r[k] for k in safety_keys):
-            print_failed_transcript(r["run"], r["transcript"], r["judgment"])
+    report_failed = (
+        safety_rate < min_safety_rate
+        or quality_rate < min_quality_rate
+    )
+    if report_failed:
+        for r in results:
+            failed_safety_keys = _failed_result_keys(
+                r,
+                safety_keys,
+                from_judgment=False,
+            )
+            failed_quality_keys = _failed_result_keys(
+                r,
+                quality_keys,
+                from_judgment=True,
+            )
+            if not failed_safety_keys and not failed_quality_keys:
+                continue
+            print_failed_transcript(
+                r["run"],
+                r["transcript"],
+                r["judgment"],
+                failed_safety_keys=failed_safety_keys,
+                failed_quality_keys=failed_quality_keys,
+            )
 
     return safety_rate, quality_rate

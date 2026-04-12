@@ -183,6 +183,22 @@ def test_parse_preferred_day_misspelled_tomorrow(monkeypatch: MonkeyPatch) -> No
     assert result == time_utils.DayRange(date(2026, 4, 12), date(2026, 4, 13))
 
 
+def test_parse_preferred_day_embedded_next_week_phrase(monkeypatch: MonkeyPatch) -> None:
+    _fixed_now(monkeypatch, datetime(2026, 4, 11, 9, 0, tzinfo=time_utils.CLINIC_TZ))
+
+    result = time_utils.parse_preferred_day("Sometime next week would be best")
+
+    assert result == time_utils.DayRange(date(2026, 4, 18), date(2026, 4, 25))
+
+
+def test_parse_preferred_day_embedded_tomorrow_phrase(monkeypatch: MonkeyPatch) -> None:
+    _fixed_now(monkeypatch, datetime(2026, 4, 11, 9, 0, tzinfo=time_utils.CLINIC_TZ))
+
+    result = time_utils.parse_preferred_day("Any time tomorrow works")
+
+    assert result == time_utils.DayRange(date(2026, 4, 12), date(2026, 4, 13))
+
+
 # ============================================================
 # parse_time_bucket
 # ============================================================

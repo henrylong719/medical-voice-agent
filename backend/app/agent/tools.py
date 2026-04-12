@@ -291,6 +291,8 @@ def _normalize_date_of_birth(date_of_birth: str) -> str | None:
         "%m/%d/%y",
         "%B %d %Y",
         "%b %d %Y",
+        "%d %B %Y",
+        "%d %b %Y",
     ):
         try:
             return datetime.strptime(cleaned, fmt).date().isoformat()
@@ -415,8 +417,10 @@ def find_patient_by_identifier(identifier_type: IdentifierType, identifier_value
         return _json_tool_response(
             status="single_match",
             message=(
-                "One patient matched that identifier. Confirm the patient's name "
-                "and date of birth before proceeding."
+                "One patient matched that identifier. Ask for explicit "
+                "confirmation before proceeding. If any key detail on file "
+                "differs from what the patient said earlier, point out the "
+                "difference and ask whether it is still their record."
             ),
             patient=_serialize_patient(patients[0]),
             lookup_method="identifier",
@@ -445,8 +449,10 @@ def find_patients_by_demographics(
 
     Use this as the first lookup step for returning patients.
     If multiple matches remain, ask for a phone number and search again.
-    Only ask for a stronger identifier if demographics plus phone still
-    cannot isolate one patient record.
+    If demographics produce no match, ask for a stronger identifier next
+    rather than retrying with a phone number.
+    Only ask for a stronger identifier after demographics plus phone for
+    ambiguous multiple-match cases.
     """
     normalized_name = full_name.strip()
     normalized_dob = _normalize_date_of_birth(date_of_birth)
@@ -479,10 +485,10 @@ def find_patients_by_demographics(
         return _json_tool_response(
             status="no_match",
             message=(
-                "No patient matched that name and date of birth. Ask for a phone "
-                "number if you do not have one yet. If that still fails, ask for "
-                "a stronger identifier or offer registration if this may be their "
-                "first visit."
+                "No patient matched that name and date of birth. Ask for a stronger "
+                "identifier such as MRN, passport number, driver's license number, "
+                "or clinic patient number. If they do not know one, then offer "
+                "registration if this may be their first visit."
             ),
             lookup_method="demographics",
         )

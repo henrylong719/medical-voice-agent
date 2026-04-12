@@ -27,11 +27,11 @@ import uuid
 from dataclasses import dataclass
 
 import pytest
-from langchain_anthropic import ChatAnthropic
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from app.agent.graph import invoke_agent
 from app.supabase_client import supabase
+from evals.eval_helpers import build_eval_llm, parse_judge_json
 
 pytestmark = pytest.mark.skipif(
     os.getenv("RUN_EVALS") != "1",
@@ -85,9 +85,36 @@ def seeded_collision():
         }).execute()
 
     existing_appt_id = "00000000-0000-4000-8000-0000000000b1"
+    doctors = (
+        supabase.table("doctor_specialties")
+        .select("doctor_id, specialties(id, name)")
+        .execute()
+    )
+    cardio = next(
+        (d for d in (doctors.data or [])
+         if d.get("specialties", {}).get("name", "").lower() == "cardiology"),
+        None,
+    )
+
+    if cardio:
+        doctor_id = cardio["doctor_id"]
+        specialty_id = cardio["specialties"]["id"]
+    else:
+        doctor_id = (doctors.data or [{}])[0].get("doctor_id", "doctor-1")
+        specialty_id = "spec-cardio"
+
+    from datetime import datetime, timedelta, timezone
+    future = datetime.now(timezone.utc) + timedelta(days=7)
+    start = future.replace(hour=14, minute=0, second=0, microsecond=0)
+    end = start + timedelta(minutes=30)
+
     supabase.table("appointments").upsert({
         "id": existing_appt_id,
         "patient_id": PATIENT_A.id,
+        "doctor_id": doctor_id,
+        "specialty_id": specialty_id,
+        "start_at": start.isoformat(),
+        "end_at": end.isoformat(),
         "status": "scheduled",
         "eval_tag": SCENARIO_TAG,
     }).execute()
@@ -131,7 +158,7 @@ Rules:
 
 
 def simulate_user_turn(history: list[dict]) -> str:
-    llm = ChatAnthropic(model="claude-sonnet-4-6", max_tokens=200)
+    llm = build_eval_llm(model="claude-sonnet-4-6", max_tokens=200)
     messages = [SystemMessage(content=SIMULATED_USER_PROMPT)]
     for turn in history:
         # We feed the simulator the AGENT's lines as "human" input from its
@@ -208,12 +235,10 @@ def judge_transcript(history: list[dict]) -> dict:
     transcript = "\n".join(
         f"{turn['role'].upper()}: {turn['content']}" for turn in history
     )
-    llm = ChatAnthropic(model="claude-opus-4-6", max_tokens=500)
+    llm = build_eval_llm(model="claude-opus-4-6", max_tokens=500)
     result = llm.invoke([HumanMessage(content=JUDGE_PROMPT + transcript)])
     raw = result.content if isinstance(result.content, str) else str(result.content)
-    # Strip code fences if the judge added them.
-    raw = raw.strip().removeprefix("```json").removeprefix("```").removesuffix("```")
-    return json.loads(raw)
+    return parse_judge_json(raw)
 
 
 # ---------------------------------------------------------------------------

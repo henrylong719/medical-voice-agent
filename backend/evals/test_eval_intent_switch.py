@@ -38,12 +38,12 @@ pytestmark = pytest.mark.skipif(
 SCENARIO_TAG = "eval_intent_switch"
 
 PATIENT = SeededPatient(
-    id="00000000-0000-4000-8000-0000000000h1",
+    id="00000000-0000-4000-8000-000000000ab1",
     full_name="Intent Switch Patient",
     date_of_birth="1987-04-15",
     phone="555-7700",
 )
-APPT_ID = "00000000-0000-4000-8000-0000000000h2"
+APPT_ID = "00000000-0000-4000-8000-000000000ab2"
 
 PERSONA = """\
 You are roleplaying as a patient calling a clinic. Stay in character.

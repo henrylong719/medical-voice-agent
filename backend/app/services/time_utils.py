@@ -117,7 +117,7 @@ def _next_weekday(from_date: date, target: int, strictly_after: bool) -> date:
 
 def _parse_mmdd(s: str, year: int) -> date | None:
     """Parse numeric date formats: '2/24', '02/24', '02/24/2026'."""
-    m = re.fullmatch(r"(\d{1,2})/(\d{1,2})(?:/(\d{2,4}))?", s)
+    m = re.search(r"\b(\d{1,2})/(\d{1,2})(?:/(\d{2,4}))?\b", s)
     if not m:
         return None
     mm, dd = int(m.group(1)), int(m.group(2))
@@ -135,10 +135,10 @@ def _parse_month_day(s: str, year: int) -> date | None:
         'feb 24 2027', '24 feb 2027'
     """
     for pattern in [
-        r"([a-z]+)\s+(\d{1,2})(?:\s+(\d{2,4}))?",   # "feb 24"
-        r"(\d{1,2})\s+([a-z]+)(?:\s+(\d{2,4}))?",    # "24 feb"
+        r"\b([a-z]+)\s+(\d{1,2})(?:\s+(\d{2,4}))?\b",   # "feb 24"
+        r"\b(\d{1,2})\s+([a-z]+)(?:\s+(\d{2,4}))?\b",    # "24 feb"
     ]:
-        m = re.fullmatch(pattern, s)
+        m = re.search(pattern, s)
         if not m:
             continue
         g1, g2, g3 = m.group(1), m.group(2), m.group(3)
@@ -188,24 +188,24 @@ def parse_preferred_day(preferred_day: str | None) -> DayRange:
     if s in ("", "today", "tod"):
         return DayRange(today, today + timedelta(days=1))
 
-    if s in ("tomorrow", "tmr", "tommorow"):
+    if any(token in {"tomorrow", "tmr", "tommorow"} for token in s.split()):
         d = today + timedelta(days=1)
         return DayRange(d, d + timedelta(days=1))
 
-    if s in ("this week", "thisweek"):
+    if "this week" in s or s == "thisweek":
         return DayRange(today, today + timedelta(days=7))
 
-    if s in ("next week", "nextweek"):
+    if "next week" in s or s == "nextweek":
         start = today + timedelta(days=7)
         return DayRange(start, start + timedelta(days=7))
 
-    if s in ("weekend", "this weekend"):
+    if "weekend" in s:
         days_until_sat = (5 - today.weekday()) % 7
         sat = today + timedelta(days=days_until_sat)
         return DayRange(sat, sat + timedelta(days=2))
 
     # "next monday", "next thurs" — strictly after today
-    m = re.fullmatch(r"next\s+([a-z]+)", s)
+    m = re.search(r"\bnext\s+([a-z]+)\b", s)
     if m:
         w = WEEKDAY_MAP.get(m.group(1))
         if w is not None:
@@ -213,8 +213,9 @@ def parse_preferred_day(preferred_day: str | None) -> DayRange:
             return DayRange(d, d + timedelta(days=1))
 
     # Bare weekday name: "tuesday", "fri" — includes today if it matches
-    if s in WEEKDAY_MAP:
-        d = _next_weekday(today, WEEKDAY_MAP[s], strictly_after=False)
+    weekday_hits = [WEEKDAY_MAP[token] for token in s.split() if token in WEEKDAY_MAP]
+    if len(set(weekday_hits)) == 1 and weekday_hits:
+        d = _next_weekday(today, weekday_hits[0], strictly_after=False)
         return DayRange(d, d + timedelta(days=1))
 
     # Numeric: "2/24", "02/24/2026"
@@ -228,7 +229,7 @@ def parse_preferred_day(preferred_day: str | None) -> DayRange:
         return DayRange(parsed, parsed + timedelta(days=1))
 
     # N weeks: "2 weeks", "3weeks"
-    m = re.fullmatch(r"(\d+)\s*weeks?", s)
+    m = re.search(r"\b(\d+)\s*weeks?\b", s)
     if m:
         weeks = int(m.group(1))
         return DayRange(today, today + timedelta(weeks=weeks))

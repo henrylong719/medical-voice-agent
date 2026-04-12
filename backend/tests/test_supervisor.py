@@ -139,6 +139,70 @@ def test_supervisor_routes_to_intake_after_patient_status_is_known() -> None:
     assert result == {"current_agent": "intake"}
 
 
+def test_supervisor_classifies_i_came_before_as_returning() -> None:
+    result = asyncio.run(
+        supervisor.supervisor_node(
+            _state(
+                patient_id=None,
+                patient_name=None,
+                intent="book",
+                messages=[
+                    HumanMessage(content="hi"),
+                    AIMessage(content="Hello! Welcome to the clinic."),
+                    HumanMessage(content="I'd like to make an appointment"),
+                    AIMessage(content="Have you been seen at this clinic before, or is this your first visit?"),
+                    HumanMessage(content="I came before"),
+                ],
+            )
+        )
+    )
+
+    assert result == {
+        "patient_status": "returning",
+        "current_agent": "supervisor",
+        "last_agent": None,
+    }
+
+
+def test_supervisor_uses_llm_fallback_for_patient_status(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    async def fake_classify_patient_status_with_llm(
+        message: HumanMessage,
+    ) -> str | None:
+        assert message.content == "I visited before"
+        return "returning"
+
+    monkeypatch.setattr(
+        supervisor,
+        "_classify_patient_status_with_llm",
+        fake_classify_patient_status_with_llm,
+    )
+
+    result = asyncio.run(
+        supervisor.supervisor_node(
+            _state(
+                patient_id=None,
+                patient_name=None,
+                intent="book",
+                messages=[
+                    HumanMessage(content="hi"),
+                    AIMessage(content="Hello! Welcome to the clinic."),
+                    HumanMessage(content="I'd like to make an appointment"),
+                    AIMessage(content="Have you been seen at this clinic before, or is this your first visit?"),
+                    HumanMessage(content="I visited before"),
+                ],
+            )
+        )
+    )
+
+    assert result == {
+        "patient_status": "returning",
+        "current_agent": "supervisor",
+        "last_agent": None,
+    }
+
+
 def test_supervisor_routes_identity_correction_back_to_intake(
     monkeypatch: MonkeyPatch,
 ) -> None:
@@ -159,6 +223,52 @@ def test_supervisor_routes_identity_correction_back_to_intake(
                     HumanMessage(content="I have headaches"),
                     AIMessage(content="I found Henry Long born on 1990-01-02 on file — is that you?"),
                     HumanMessage(content="no sorry that's the wrong patient"),
+                ],
+            )
+        )
+    )
+
+    assert result == {
+        "patient_id": None,
+        "patient_name": None,
+        "appointment_id": None,
+        "selected_appointment_id": None,
+        "current_agent": "intake",
+        "last_agent": None,
+    }
+
+
+def test_supervisor_routes_llm_detected_identity_correction_back_to_intake(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    async def fake_classify_identity_correction_with_llm(
+        latest_ai: AIMessage | None,
+        latest_human: HumanMessage,
+    ) -> bool:
+        assert latest_ai is not None
+        assert latest_human.content == "The date of birth is wrong."
+        return True
+
+    monkeypatch.setattr(
+        supervisor,
+        "_classify_identity_correction_with_llm",
+        fake_classify_identity_correction_with_llm,
+    )
+
+    result = asyncio.run(
+        supervisor.supervisor_node(
+            _state(
+                intent="book",
+                patient_id="patient-1",
+                patient_name="Henry Long",
+                appointment_id="appt-1",
+                selected_appointment_id="appt-1",
+                messages=[
+                    HumanMessage(content="hi"),
+                    AIMessage(content="Hello! Welcome to the clinic."),
+                    HumanMessage(content="I have headaches"),
+                    AIMessage(content="I found Henry Long born on 1990-01-02 on file — is that you?"),
+                    HumanMessage(content="The date of birth is wrong."),
                 ],
             )
         )
@@ -276,6 +386,50 @@ def test_supervisor_detects_explicit_intent_change_mid_flow() -> None:
             HumanMessage(content="I'd like to make an appointment"),
             AIMessage(content="Do you have a particular type of specialist in mind?"),
             HumanMessage(content="sorry actually i'd like to reschedule an appointment"),
+        ],
+        symptoms=["headache"],
+        specialty_id="spec-neuro",
+    )
+
+    result = asyncio.run(supervisor.supervisor_node(state))
+
+    assert result == {
+        "intent": "reschedule",
+        "patient_status": None,
+        "symptoms": [],
+        "specialty_id": None,
+        "selected_appointment_id": None,
+        "current_agent": "supervisor",
+        "last_agent": None,
+    }
+
+
+def test_supervisor_detects_llm_intent_change_mid_flow(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    async def fake_classify_intent_switch_with_llm(
+        message: HumanMessage,
+        current_intent: str,
+    ) -> str | None:
+        assert message.content == "Can you move this appointment to another day?"
+        assert current_intent == "book"
+        return "reschedule"
+
+    monkeypatch.setattr(
+        supervisor,
+        "_classify_intent_switch_with_llm",
+        fake_classify_intent_switch_with_llm,
+    )
+
+    state = _state(
+        intent="book",
+        last_agent="triage",
+        messages=[
+            HumanMessage(content="hi"),
+            AIMessage(content="Hello! Welcome to the clinic."),
+            HumanMessage(content="I'd like to make an appointment"),
+            AIMessage(content="Do you have a particular type of specialist in mind?"),
+            HumanMessage(content="Can you move this appointment to another day?"),
         ],
         symptoms=["headache"],
         specialty_id="spec-neuro",
