@@ -267,6 +267,50 @@ These tests use an in-memory checkpointer plus scripted sub-agent doubles, so
 they cover conversation flow and state transitions without calling external LLM
 APIs.
 
+For the opt-in eval suite under `backend/evals`:
+
+- `uv sync` is enough for the Python dependencies used by the eval suite, so you do not need separate install steps before running them.
+- The eval fixtures currently tag seeded rows for cleanup, so your test Supabase project needs a nullable `eval_tag` column on both `patients` and `appointments`.
+- Most evals call the real agent graph directly and use real external services, so they can cost money and should be run against a test Supabase project, not production.
+
+Add the eval-only columns once in your test database:
+
+```sql
+ALTER TABLE patients ADD COLUMN IF NOT EXISTS eval_tag text;
+ALTER TABLE appointments ADD COLUMN IF NOT EXISTS eval_tag text;
+```
+
+Run one eval and print the safety and quality report to stdout:
+
+```bash
+cd backend
+RUN_EVALS=1 uv run pytest evals/test_eval_identity_ambiguity.py -s
+```
+
+The `-s` flag is important because it prints pass rates and failed transcripts.
+
+Run the full eval suite:
+
+```bash
+cd backend
+RUN_EVALS=1 uv run pytest evals -s
+```
+
+If you include the HTTP contract evals `evals/test_eval_admin_dob_validation.py`
+or `evals/test_eval_streaming_contract.py`, start the API first:
+
+```bash
+cd backend
+uv run uvicorn app.main:app --reload
+```
+
+Those tests default to `http://localhost:8000`, or you can point them at a
+different server with `EVAL_BASE_URL`.
+
+LR-11 (RAG degradation) is not covered by the automated eval suite. It requires
+removing `OPENAI_API_KEY` at runtime to force semantic retrieval failure, which
+is environment-destructive and better tested manually in a dedicated test setup.
+
 For the RAG retriever smoke test:
 
 ```bash
