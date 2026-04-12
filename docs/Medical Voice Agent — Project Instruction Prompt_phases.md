@@ -52,8 +52,8 @@
   - All endpoints tested and working
 
 - **Phase 2 complete:**
-  - 9 agent tools with Pydantic input schemas: identify_patient, register_patient, triage_symptoms, find_slots, book_appointment, find_appointment, reschedule_appointment, cancel_appointment, list_specialties
-  - System prompt with mandatory UIN-first workflow, response style rules, and hard safety boundaries
+  - 10 agent tools with Pydantic input schemas: find_patient_by_identifier, find_patients_by_demographics, register_patient, triage_symptoms, find_slots, book_appointment, find_appointment, reschedule_appointment, cancel_appointment, list_specialties
+  - System prompt with demographics-first identification, fallback stronger identifiers, response style rules, and hard safety boundaries
   - Agent graph using create_agent (LangChain v1.0 API) with Claude Haiku 4.5
   - Persistent conversation memory via AsyncPostgresSaver (Supabase Postgres), with AsyncExitStack lifecycle management and clean shutdown via FastAPI lifespan
   - Chat API: POST /api/v1/chat (SSE streaming) and POST /api/v1/chat/invoke (full response)
@@ -91,8 +91,8 @@
   - Admin REST API: CRUD for specialties, doctors, patients, appointments, blocks, slots
   - All endpoints tested and working
 - **Phase 2 complete:**
-  - 9 agent tools with Pydantic input schemas: identify_patient, register_patient, triage_symptoms, find_slots, book_appointment, find_appointment, reschedule_appointment, cancel_appointment, list_specialties
-  - System prompt with mandatory UIN-first workflow, response style rules, and hard safety boundaries
+  - 10 agent tools with Pydantic input schemas: find_patient_by_identifier, find_patients_by_demographics, register_patient, triage_symptoms, find_slots, book_appointment, find_appointment, reschedule_appointment, cancel_appointment, list_specialties
+  - System prompt with demographics-first identification, fallback stronger identifiers, response style rules, and hard safety boundaries
   - Agent graph using create_agent (LangChain v1.0 API) with Claude Haiku 4.5
   - Persistent conversation memory via AsyncPostgresSaver (Supabase Postgres), with AsyncExitStack lifecycle management and clean shutdown via FastAPI lifespan
   - Chat API: POST /api/v1/chat (SSE streaming) and POST /api/v1/chat/invoke (full response)
@@ -103,6 +103,7 @@
   - pgvector extension enabled in Supabase with HNSW index (cosine distance)
   - medical_knowledge table with vector(1536) column, md5(content) unique index, and JSONB metadata
   - match_medical_knowledge RPC function for similarity search with configurable threshold and count
+  - Ambiguous identity handling now guides patients toward staff help, but a dedicated human-handoff implementation is still pending
   - 24 knowledge chunks written across 10 specialties + 1 emergency severity guide, organized by symptom cluster (200–500 tokens each)
   - Iterative chunk quality improvements: added focused migraine-with-aura chunk (fixed Neurology vs Ophthalmology ambiguity) and focused diabetes symptoms chunk (fixed colloquial symptom matching)
   - Ingestion pipeline (ingest_knowledge.py): batch embeds via OpenAI text-embedding-3-small, idempotent with skip-if-exists logic

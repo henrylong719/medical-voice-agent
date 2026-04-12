@@ -59,9 +59,9 @@ The project is built in 7 sequential phases. Each phase produces a working syste
 - **Phase 6:** Voice Pipeline — AssemblyAI STT + Cartesia TTS over WebSocket
 - **Phase 7:** Evaluation & Optimization — LangSmith evals, datasets, prompt iteration
 
-### Database Schema (9 tables)
+### Database Schema
 
-specialties, symptom_specialty_map (with weights and follow-up questions), doctors, doctor_specialties, doctor_availability (weekly templates), doctor_blocks (time-off), patients (identified by 9-digit UIN), appointments, conversations
+specialties, symptom_specialty_map (with weights and follow-up questions), doctors, doctor_specialties, doctor_availability (weekly templates), doctor_blocks (time-off), patients (demographic records), patient_identifiers (MRN/passport/driver's license/clinic ID), appointments, conversations
 
 ---
 

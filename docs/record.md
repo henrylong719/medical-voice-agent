@@ -150,12 +150,12 @@ This is a common pattern in production RAG systems. Pure semantic search sounds 
 
 Q: Imagine a patient calls in and says "I want to reschedule my cardiology appointment." With your current single-agent setup, the agent has to figure out the right sequence on its own from one big prompt. With the multi-agent supervisor approach, what do you think the sequence of agent handoffs would look like? Which agents would be involved and in what order?
 
-Your steps 1–2 (ask for UIN, look them up) → that's the Intake Agent's job. Steps 3–5 (find the existing appointment, find new slots, book) → that's all the Scheduling Agent.
+Your steps 1–2 (identify the patient, look up their record) → that's the Intake Agent's job. Steps 3–5 (find the existing appointment, find new slots, book) → that's all the Scheduling Agent.
 But here's the interesting part — notice how the Triage Agent gets skipped entirely. The patient said "reschedule my cardiology appointment" — they already have a specialty, they already have an appointment. No symptom collection needed.
 That's exactly the kind of decision the Supervisor makes. It looks at the state and asks: "Is the patient identified? Do we know what they want? Do we need triage, or can we go straight to scheduling?" In this case:
 
 Supervisor sees patient_id is None → routes to Intake Agent
-Intake Agent collects UIN, identifies patient, hands back to Supervisor
+Intake Agent collects demographic details first, identifies the patient, and only falls back to stronger identifiers if needed, then hands back to Supervisor
 Supervisor sees patient is identified, intent is "reschedule" (no triage needed) → routes to Scheduling Agent
 Scheduling Agent finds the existing appointment, cancels it, finds new slots, books the new one
 
@@ -168,7 +168,7 @@ You're right that each agent only cares about the part relevant to its job. The 
 But the agents still need the full message list for two practical reasons:
 Reason 1: Conversational context. The patient is having one continuous conversation. If the Scheduling Agent can't see what was said before, it might re-ask things the patient already answered. Imagine this:
 
-Patient: "I have headaches and my name is Sarah, UIN 123456789"
+Patient: "I have headaches and my name is Sarah Connor and my birthday is October 26, 1985"
 Intake Agent handles identification, hands off to Triage
 Triage Agent: "Hi! What symptoms are you experiencing?"
 
@@ -176,6 +176,7 @@ The patient just told us about headaches! If Triage can't see the earlier messag
 Reason 2: The LLM needs conversation structure. When we invoke a sub-agent, we're calling an LLM with a system prompt + messages. The LLM needs to see the message history to generate a coherent next response. If you only pass it the last message, it has no context for what's going on.
 
 But here's the nuance you're sensing: each agent's system prompt acts as a filter. The Scheduling Agent sees all messages but its prompt says "you handle scheduling" — so it naturally focuses on the scheduling-relevant parts and ignores the symptom discussion. The state fields (specialty_id, patient_id) are the structured handoff data. The messages are the conversational continuity.
+One current limitation in the codebase: if identity stays ambiguous after demographics, phone, and stronger identifiers, the assistant can explain that staff help is needed, but there is not yet a dedicated human-handoff implementation.
 Think of it like a relay race — the baton (state fields) carries the key data forward, but each runner (agent) can also look back and see the whole track (messages) if they need to understand what happened before them.
 
 ## Phase 3

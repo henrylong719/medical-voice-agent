@@ -1,29 +1,34 @@
 # Medical Voice Agent
 
-Medical Voice Agent is a backend-first prototype of a university health clinic scheduling assistant. It combines a FastAPI API, Supabase/Postgres, LangGraph, Anthropic, and OpenAI embeddings to identify patients by UIN, triage symptoms, find appointment availability, and manage bookings through a conversational interface.
+Medical Voice Agent is a backend-first prototype of a medical clinic scheduling assistant. It combines a FastAPI API, Supabase/Postgres, LangGraph, Anthropic, and OpenAI embeddings to identify patients through a demographic-first intake flow, triage symptoms, find appointment availability, and manage bookings through a conversational interface.
 
 The active implementation lives in [`backend/`](backend/). The planning history and future-phase notes live in [`docs/`](docs/).
 
 ## Current Status
 
-The repository is currently in a Phase 3-style state:
+The repository is currently in a Phase 4-style state:
 
 - Phase 1 foundations are in place: schema, seed data, admin APIs, scheduling engine, and time utilities.
 - Phase 2 agent work is in place: LangGraph agent, tool calling, patient identification, booking/rescheduling/cancellation, and chat endpoints.
 - Phase 3 hybrid triage work is in place: pgvector-backed medical knowledge retrieval plus keyword symptom matching.
+- Phase 4 multi-agent routing is in place: Supervisor + Intake + Triage + Scheduling agents.
 
 There is not a frontend or realtime voice client in this repo yet. The project is currently centered on the backend API and supporting SQL/docs.
 
 ## What The Project Does Today
 
-- Identifies returning patients by 9-digit UIN.
-- Registers new patients when a UIN is not found.
+- Asks booking patients whether they are new or returning.
+- Looks up returning patients by full name + date of birth first.
+- Uses phone as an optional disambiguator if demographic lookup is ambiguous.
+- Falls back to stronger identifiers like MRN, passport number, driver's license number, or clinic patient ID if demographics still do not resolve one record.
+- Registers new patients with full name, date of birth, and phone number.
 - Matches symptoms to specialties with hybrid triage using keyword search over `symptom_specialty_map` plus semantic search over `medical_knowledge`.
 - Finds open slots across doctors or for a specific doctor.
 - Books, reschedules, and cancels appointments.
 - Streams chat responses over Server-Sent Events.
 - Persists conversation state in Postgres using LangGraph's `AsyncPostgresSaver`.
 - Exposes admin APIs for specialties, doctors, patients, appointments, blocks, and slots.
+- Guides ambiguous identity cases toward staff help, but does not yet have a dedicated human-handoff implementation.
 
 ## Architecture At A Glance
 
@@ -49,10 +54,11 @@ There is not a frontend or realtime voice client in this repo yet. The project i
 │   │   ├── main.py         # FastAPI entry point
 │   │   └── supabase_client.py
 │   ├── sql/
-│   │   ├── schema.sql
-│   │   ├── seed.sql
-│   │   ├── create_doctor_with_details.sql
-│   │   └── rag.sql
+│   │   ├── 001_schema.sql
+│   │   ├── 002_seed.sql
+│   │   ├── 003_create_doctor_with_details.sql
+│   │   ├── 004_finalize_reschedule_appointment.sql
+│   │   └── 005_rag.sql
 │   ├── .env.example
 │   ├── pyproject.toml
 │   └── uv.lock
@@ -114,15 +120,34 @@ Keep the service-role key local to the backend only. Do not expose it to a brows
 
 Run these SQL files in your Supabase SQL editor, in this order:
 
-1. `backend/sql/schema.sql`
-2. `backend/sql/seed.sql`
-3. `backend/sql/create_doctor_with_details.sql`
-4. `backend/sql/rag.sql`
+1. `backend/sql/001_schema.sql`
+2. `backend/sql/002_seed.sql`
+3. `backend/sql/003_create_doctor_with_details.sql`
+4. `backend/sql/004_finalize_reschedule_appointment.sql`
+5. `backend/sql/005_rag.sql`
 
 Notes:
 
-- The first three files get the clinic data model, sample data, and doctor-creation RPC in place.
-- `rag.sql` enables `pgvector`, creates `medical_knowledge`, and adds the `match_medical_knowledge` RPC used by hybrid triage.
+- The first four files get the clinic data model, sample data, doctor-creation RPC, and reschedule-finalization RPC in place.
+- `005_rag.sql` enables `pgvector`, creates `medical_knowledge`, and adds the `match_medical_knowledge` RPC used by hybrid triage.
+- If you reset the `public` schema in Supabase, make sure `service_role` privileges are restored before running ingestion scripts. The schema SQL now includes the required grants, but for existing projects you can re-run:
+
+```sql
+grant usage on schema public to service_role;
+grant all privileges on all tables in schema public to service_role;
+grant all privileges on all sequences in schema public to service_role;
+grant all privileges on all routines in schema public to service_role;
+
+alter default privileges in schema public
+  grant all privileges on tables to service_role;
+alter default privileges in schema public
+  grant all privileges on sequences to service_role;
+alter default privileges in schema public
+  grant all privileges on routines to service_role;
+```
+
+- If `python -m app.services.ingest_knowledge` fails with `permission denied for table medical_knowledge`, this is the first thing to check. Also confirm that `SUPABASE_SERVICE_KEY` in `backend/.env` is the service-role key, not the anon key.
+- `service_role` is backend-only and must never be exposed to browser clients, mobile apps, or public code.
 
 ### 4. Install Dependencies
 
@@ -164,8 +189,10 @@ Mounted under `/api/v1/admin`:
 - `GET /doctors/{doctor_id}`
 - `POST /doctors`
 - `GET /patients`
-- `GET /patients/uin/{uin}`
+- `POST /patients/search`
+- `GET /patients/{patient_id}`
 - `POST /patients`
+- `POST /patients/{patient_id}/identifiers`
 - `GET /appointments`
 - `GET /appointments/{appointment_id}`
 - `GET /blocks`
@@ -203,7 +230,7 @@ curl -N -X POST http://localhost:8000/api/v1/chat \
 curl -X POST http://localhost:8000/api/v1/chat/invoke \
   -H "Content-Type: application/json" \
   -d '{
-    "message": "My UIN is 123456789 and I need to reschedule my appointment.",
+    "message": "I need to reschedule my appointment. My name is Sarah Connor and my birthday is October 26, 1985.",
     "thread_id": "demo-thread-1"
   }'
 ```
@@ -216,15 +243,29 @@ curl "http://localhost:8000/api/v1/admin/slots/by-specialty?specialty_id=a100000
 
 ## Key Implementation Notes
 
-- Patient identity is a first-class part of the workflow. The agent is prompted to ask for a UIN before doing anything else.
+- Patient identity is a first-class part of the workflow. For booking, the agent asks whether the patient is new or returning, then starts returning-patient lookup with full name + date of birth.
+- If demographic lookup is ambiguous, the agent asks for phone next and only then falls back to stronger identifiers like MRN or passport number.
+- If identity remains ambiguous, the current implementation guides the conversation toward staff help, but a dedicated human-handoff mechanism has not been implemented yet.
 - Scheduling is computed from recurring availability templates, then filtered by booked appointments and doctor time-off blocks.
 - RAG retrieval uses OpenAI embeddings and a Supabase RPC rather than embedding logic inside the agent tool layer.
 - If semantic retrieval is unavailable, the triage tool falls back to keyword results instead of crashing the whole flow.
-- The seed data includes 10 specialties, 8 doctors, symptom mappings, patients, and appointment data for development.
+- The seed data includes 10 specialties, 8 doctors, symptom mappings, patients, patient identifiers, and appointment data for development.
 
 ## Validation And Smoke Tests
 
 Interactive API docs are available at `http://localhost:8000/docs`.
+
+For automated multi-turn workflow tests that exercise the real Supervisor and
+LangGraph routing without Postman:
+
+```bash
+cd backend
+uv run python -m pytest tests/test_workflows.py
+```
+
+These tests use an in-memory checkpointer plus scripted sub-agent doubles, so
+they cover conversation flow and state transitions without calling external LLM
+APIs.
 
 For the RAG retriever smoke test:
 
@@ -236,22 +277,20 @@ uv run python -m app.services.test_retriever
 This script expects:
 
 - `OPENAI_API_KEY` to be configured
-- `backend/sql/rag.sql` to have been applied
+- `backend/sql/005_rag.sql` to have been applied
 - `medical_knowledge` to be populated via the ingestion script
 
 ## Roadmap And Docs
 
 The docs folder contains both the current phase notes and the forward-looking project plan.
 
-- [Current Phase 3 notes](<docs/Medical Voice Agent — Project Instruction Prompt_phase3.md>)
+- [Phase 1 notes](<docs/Medical Voice Agent — Project Instruction Prompt_phase1.md>)
 - [Combined phase status notes](<docs/Medical Voice Agent — Project Instruction Prompt_phases.md>)
 - [Original project planning prompt](<docs/Medical Voice Agent — Project Instruction Prompt.md>)
-- [Phase 3 hybrid triage flow diagram](docs/phase3_hybrid_rag_triage_flow.svg)
 - [Long-form working notes](docs/record.md)
 
 Planned next stages referenced in the docs:
 
-- Phase 4: multi-agent LangGraph supervisor with intake, triage, and scheduling sub-agents
 - Phase 5: guardrails and safety boundaries
 - Phase 6: realtime voice pipeline
 - Phase 7: evaluation and prompt optimization
