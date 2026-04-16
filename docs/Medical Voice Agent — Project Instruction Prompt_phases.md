@@ -1,3 +1,24 @@
+# Phase 1
+
+## Current Phase
+
+**I am currently on: Phase 1 — Database & Backend Foundation**
+
+### What's Been Built So Far
+
+- (nothing yet — just starting)
+
+### What I'm Working On Now
+
+- Designing the database schema in Supabase
+
+### Current Challenges
+
+- (none yet)
+
+
+
+
 
 # Phase 2
 
