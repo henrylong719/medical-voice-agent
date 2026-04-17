@@ -13,8 +13,6 @@ The repository is currently in a Phase 4-style state:
 - Phase 3 hybrid triage work is in place: pgvector-backed medical knowledge retrieval plus keyword symptom matching.
 - Phase 4 multi-agent routing is in place: Supervisor + Intake + Triage + Scheduling agents.
 
-There is not a frontend or realtime voice client in this repo yet. The project is currently centered on the backend API and supporting SQL/docs.
-
 ## Upcoming Milestones
 
 - **Phase 5:** Emergency symptoms trigger an immediate escalation response, and the assistant refuses medical advice while staying in scheduling mode.
