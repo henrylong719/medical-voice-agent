@@ -15,6 +15,13 @@ The repository is currently in a Phase 4-style state:
 
 There is not a frontend or realtime voice client in this repo yet. The project is currently centered on the backend API and supporting SQL/docs.
 
+## Upcoming Milestones
+
+- **Phase 5:** Emergency symptoms trigger an immediate escalation response, and the assistant refuses medical advice while staying in scheduling mode.
+- **Phase 6:** A patient can complete an end-to-end appointment workflow entirely by voice through the browser.
+- **Phase 7:** The project has measurable eval coverage for quality and safety, with regression checks for prompt changes.
+- **Phase 8:** The medical tools are available through an MCP server and usable from an MCP-compatible client.
+
 ## What The Project Does Today
 
 - Asks booking patients whether they are new or returning.
@@ -326,18 +333,22 @@ This script expects:
 
 ## Roadmap And Docs
 
-The docs folder contains both the current phase notes and the forward-looking project plan.
+The docs folder contains both earlier phase notes and the current long-form roadmap.
 
+- [Current architecture and learning plan](docs/medical_voice_agent_plan_v3.md)
 - [Phase 1 notes](<docs/Medical Voice Agent — Project Instruction Prompt_phase1.md>)
 - [Combined phase status notes](<docs/Medical Voice Agent — Project Instruction Prompt_phases.md>)
 - [Original project planning prompt](<docs/Medical Voice Agent — Project Instruction Prompt.md>)
 - [Long-form working notes](docs/record.md)
 
-Planned next stages referenced in the docs:
+Based on the current implementation, Phases 1 through 4 are in place. The remaining roadmap is:
 
-- Phase 5: guardrails and safety boundaries
-- Phase 6: realtime voice pipeline
-- Phase 7: evaluation and prompt optimization
+| Phase | Focus | Duration | Goal |
+| --- | --- | --- | --- |
+| **5. Guardrails & Medical Safety** | Safety boundaries, emergency detection, scope control, PII hygiene | 1-2 weeks | Add input/output guardrails so the assistant stays in scheduling scope, catches red-flag symptoms, and handles sensitive data more safely. |
+| **6. Real-Time Voice Pipeline** | Streaming STT/TTS, WebSockets, barge-in, spoken UX | 2-4 weeks | Turn the text-based backend into a realtime voice experience with AssemblyAI STT, Cartesia TTS, and a FastAPI WebSocket pipeline. |
+| **7. Evaluation, Testing & Prompt Optimization** | LangSmith datasets, automated scoring, regression coverage | 2-3 weeks | Build a repeatable eval system for triage accuracy, safety, end-to-end flows, and prompt iteration. |
+| **8. MCP Integration** | MCP server, tools/resources/prompts, stdio + SSE transports | 1-2 weeks | Expose scheduling and triage capabilities through a standards-compliant MCP server for Claude Desktop and other MCP clients. |
 
 ## License
 
