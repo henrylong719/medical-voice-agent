@@ -41,6 +41,7 @@ from langchain_anthropic import ChatAnthropic
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from pydantic import SecretStr
 
+from app.agent.guardrails import screen_input
 from app.agent.state import AgentState
 from app.config import settings
 
@@ -607,6 +608,25 @@ async def supervisor_node(state: AgentState) -> dict:
     specialty_id = state.get("specialty_id")
     last_agent = state.get("last_agent")
 
+    # ── Rule 0: Input guardrails (before anything else) ────
+    # Deterministic checks — no LLM call. Catches emergencies,
+    # prompt injection, medical advice requests, and off-topic
+    # queries. If triggered, we short-circuit the entire graph
+    # and respond immediately.
+    latest_human = _latest_human_message(state)
+    if latest_human is not None:
+        human_text = _flatten_message_content(latest_human.content)
+        guardrail_result = screen_input(human_text)
+        if guardrail_result is not None:
+            logger.warning(
+                "Input guardrail triggered (%s) — short-circuiting",
+                guardrail_result.category,
+            )
+            return {
+                "messages": [AIMessage(content=guardrail_result.response)],
+                "current_agent": "done",
+            }
+
     # ── Rule 1: Greet on first message ───────────────────
     # The patient just connected. Greet them naturally and
     # let them tell us what they need — don't jump straight
@@ -666,7 +686,6 @@ async def supervisor_node(state: AgentState) -> dict:
     # Patients often change course with phrases like "actually I'd like
     # to reschedule instead." If we keep the old intent, the wrong
     # sub-agent will answer from stale context.
-    latest_human = _latest_human_message(state)
     if latest_human is not None:
         override_intent = None
         if _looks_like_explicit_intent_switch(latest_human, intent):
