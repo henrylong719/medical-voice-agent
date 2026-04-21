@@ -193,3 +193,27 @@ The None state is essentially the Supervisor saying "I don't have enough informa
 Q: Why can't we just make the prompts stricter instead of building a separate guardrails layer? What's the fundamental limitation of relying on prompts alone for safety?
 
 As the conversation grows longer, the system prompt gets pushed further from the model's attention window, and compliance degrades. There's also a more fundamental issue: the LLM is a single point of failure. No matter how good your prompt is, it's still asking the model to behave — not forcing it. A separate guardrails layer acts as an independent check that doesn't share the same failure mode.
+
+Q:  "What medication should I take?" is clearly out of scope. But "Will the dermatologist be able to help with my eczema?" is borderline — it's about whether we offer the right service, which IS in scope. Where would you draw the line between "medical advice request" and "legitimate scheduling question that mentions a medical topic"?
+
+The strict approach ("reject anything medical that isn't scheduling") is safer but creates a frustrating experience. Imagine this conversation:
+Patient: "Will a dermatologist help with my eczema, or do I need an allergist?"
+Agent: "I'm sorry, I can't provide medical advice. Would you like to book an appointment?"
+That's technically correct, but the patient was asking a legitimate question about which specialist to book with — which IS our scope. The triage agent already does this! It matches symptoms to specialties. So rejecting that question would actually break the flow we've built.
+
+Here's how I'd draw the line:In scope 
+(let through).                                         Out of scope (deflect)
+"Which specialist should I see for X?"           "What medication should I take for X?"
+"Can a dermatologist help with eczema?"          "Is ibuprofen safe with blood pressure meds?"
+"Is my symptom serious enough to see a doctor?"  "What's causing my headache?"
+"Do you have an ENT specialist?"                 "How do I treat my sore throat at home?"
+
+The pattern: questions about who to see = scheduling scope. Questions about what to do/take/diagnose = medical advice.
+
+So the input classifier should catch messages that ask for treatment, diagnosis, medication, or prognosis — but NOT messages that ask about specialists or whether symptoms warrant an appointment. Those should flow to triage normally.
+
+For prompt injection, we want to be firm but not paranoid. We block obvious manipulation attempts but don't flag normal conversation that happens to contain words like "ignore" or "instructions."
+
+
+
+
