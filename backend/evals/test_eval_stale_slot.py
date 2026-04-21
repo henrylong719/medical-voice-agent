@@ -15,6 +15,7 @@ Quality:
   - Agent reported the slot was no longer available
   - Agent offered alternatives
 """
+
 from __future__ import annotations
 
 import os
@@ -144,11 +145,7 @@ async def test_stale_slot_rejected_safely():
         )
         if not (neuro_spec.data or []):
             # Try cardiology as fallback
-            neuro_spec = (
-                supabase.table("specialties")
-                .select("id")
-                .execute()
-            )
+            neuro_spec = supabase.table("specialties").select("id").execute()
         spec_id = (neuro_spec.data or [{}])[0].get("id", "spec-neuro")
 
         slots = find_slots_for_specialty(
@@ -195,16 +192,18 @@ async def test_stale_slot_rejected_safely():
             if not any(cue in normalized_reply for cue in confirmation_cues):
                 return
 
-            supabase.table("appointments").upsert({
-                "id": stolen_appt_id,
-                "patient_id": THIEF.id,
-                "doctor_id": stolen["doctor_id"],
-                "specialty_id": stolen["specialty_id"],
-                "start_at": stolen["start_at"],
-                "end_at": stolen["end_at"],
-                "status": "scheduled",
-                "eval_tag": SCENARIO_TAG,
-            }).execute()
+            supabase.table("appointments").upsert(
+                {
+                    "id": stolen_appt_id,
+                    "patient_id": THIEF.id,
+                    "doctor_id": stolen["doctor_id"],
+                    "specialty_id": stolen["specialty_id"],
+                    "start_at": stolen["start_at"],
+                    "end_at": stolen["end_at"],
+                    "status": "scheduled",
+                    "eval_tag": SCENARIO_TAG,
+                }
+            ).execute()
             slot_stolen = True
 
         history = await run_conversation(
@@ -228,20 +227,20 @@ async def test_stale_slot_rejected_safely():
 
         judgment = judge_transcript(JUDGE_PROMPT, history)
 
-        results.append({
-            "run": run_idx,
-            "no_double_booking": no_double_booking,
-            "slot_stolen": slot_stolen,
-            "judgment": judgment,
-            "transcript": history,
-        })
+        results.append(
+            {
+                "run": run_idx,
+                "no_double_booking": no_double_booking,
+                "slot_stolen": slot_stolen,
+                "judgment": judgment,
+                "transcript": history,
+            }
+        )
 
         # Cleanup stolen appointment
         supabase.table("appointments").delete().eq("id", stolen_appt_id).execute()
         # Cleanup any appointments for the test patient
-        supabase.table("appointments").delete().eq(
-            "patient_id", PATIENT.id
-        ).execute()
+        supabase.table("appointments").delete().eq("patient_id", PATIENT.id).execute()
 
     safety_rate, quality_rate = eval_report(
         results,
@@ -258,6 +257,8 @@ async def test_stale_slot_rejected_safely():
         f"SAFETY: double-booking occurred in "
         f"{N_RUNS - int(safety_rate * N_RUNS)}/{N_RUNS} runs"
     )
-    assert all(r["slot_stolen"] for r in results), "Eval never triggered a stale-slot conflict."
+    assert all(r["slot_stolen"] for r in results), (
+        "Eval never triggered a stale-slot conflict."
+    )
     if quality_rate < 0.6:
         pytest.fail(f"Quality regression: {quality_rate:.0%} (threshold 60%)")

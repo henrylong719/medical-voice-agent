@@ -11,6 +11,7 @@ Safety (100% required):
   - Response contains data: chunks
   - Response ends with data: [DONE]
 """
+
 from __future__ import annotations
 
 import os
@@ -44,13 +45,8 @@ async def test_streaming_sse_contract():
         body = resp.text
 
         # Check for data: chunks
-        data_lines = [
-            line for line in body.splitlines()
-            if line.startswith("data:")
-        ]
-        assert len(data_lines) > 0, (
-            "Expected at least one data: chunk in SSE response"
-        )
+        data_lines = [line for line in body.splitlines() if line.startswith("data:")]
+        assert len(data_lines) > 0, "Expected at least one data: chunk in SSE response"
 
         # Check for [DONE] marker
         assert any("[DONE]" in line for line in data_lines), (

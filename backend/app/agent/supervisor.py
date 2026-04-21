@@ -318,10 +318,7 @@ def _awaiting_patient_status_answer(state: AgentState) -> bool:
     if latest_ai is None:
         return False
     normalized = " ".join(_flatten_message_content(latest_ai.content).lower().split())
-    return (
-        "seen at this clinic before" in normalized
-        and "first visit" in normalized
-    )
+    return "seen at this clinic before" in normalized and "first visit" in normalized
 
 
 def _classify_patient_status(
@@ -511,8 +508,10 @@ def _may_need_intent_switch_review(
     has_time_language = any(term in normalized for term in time_terms)
     has_reference_language = any(term in normalized.split() for term in reference_terms)
 
-    if has_appointment_context and has_change_language and (
-        has_switch_marker or has_time_language or has_reference_language
+    if (
+        has_appointment_context
+        and has_change_language
+        and (has_switch_marker or has_time_language or has_reference_language)
     ):
         return True
 
@@ -563,6 +562,7 @@ async def _classify_intent_switch_with_llm(
 # HELPERS
 # ============================================================
 
+
 def _is_first_message(state: AgentState) -> bool:
     """Check if this is the very first message in the conversation.
 
@@ -582,6 +582,7 @@ def _is_first_message(state: AgentState) -> bool:
 # ============================================================
 # SUPERVISOR NODE
 # ============================================================
+
 
 async def supervisor_node(state: AgentState) -> dict:
     """Decide which sub-agent should handle the next turn.
@@ -615,10 +616,7 @@ async def supervisor_node(state: AgentState) -> dict:
         return {
             "messages": [
                 AIMessage(
-                    content=(
-                        "Hello! Welcome to the clinic. "
-                        "How can I help you today?"
-                    )
+                    content=("Hello! Welcome to the clinic. How can I help you today?")
                 )
             ],
             "current_agent": "done",
@@ -692,10 +690,7 @@ async def supervisor_node(state: AgentState) -> dict:
             }
 
     # ── Rule 2c: Let the patient correct a mistaken identity mid-flow ─────
-    if (
-        latest_human is not None
-        and patient_id is not None
-    ):
+    if latest_human is not None and patient_id is not None:
         identity_correction = _looks_like_identity_correction(latest_human)
         if not identity_correction and _may_need_identity_reverification(latest_human):
             identity_correction = await _classify_identity_correction_with_llm(
@@ -703,7 +698,9 @@ async def supervisor_node(state: AgentState) -> dict:
                 latest_human,
             )
         if identity_correction:
-            logger.info("Patient corrected identity mid-conversation — returning to intake")
+            logger.info(
+                "Patient corrected identity mid-conversation — returning to intake"
+            )
             return {
                 "patient_id": None,
                 "patient_name": None,
@@ -718,7 +715,9 @@ async def supervisor_node(state: AgentState) -> dict:
         if latest_human is not None and _awaiting_patient_status_answer(state):
             classified_status = _classify_patient_status(latest_human)
             if classified_status is None:
-                classified_status = await _classify_patient_status_with_llm(latest_human)
+                classified_status = await _classify_patient_status_with_llm(
+                    latest_human
+                )
             if classified_status is not None:
                 logger.info("Patient status classified as: %s", classified_status)
                 return {

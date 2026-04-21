@@ -44,8 +44,10 @@ OPENAI_EMBEDDING_URL = "https://api.openai.com/v1/embeddings"
 # TYPES
 # ============================================================
 
+
 class RetrievedChunk(TypedDict):
     """Shape of a result from the similarity search."""
+
     id: str
     content: str
     metadata: dict[str, Any]
@@ -61,13 +63,12 @@ class RetrievedChunk(TypedDict):
 # model, dimensions, and API call pattern.
 # ============================================================
 
+
 def _get_openai_api_key() -> str:
     """Read and validate the OpenAI API key from settings."""
     api_key = settings.openai_api_key.strip()
     if not api_key:
-        raise RuntimeError(
-            "OPENAI_API_KEY is not configured. Set it in backend/.env."
-        )
+        raise RuntimeError("OPENAI_API_KEY is not configured. Set it in backend/.env.")
     return api_key
 
 
@@ -134,6 +135,7 @@ def embed_query(text: str) -> list[float]:
 # RETRIEVAL
 # ============================================================
 
+
 def retrieve_medical_knowledge(
     query: str,
     match_count: int = 5,
@@ -185,11 +187,13 @@ def retrieve_medical_knowledge(
         if isinstance(metadata, str):
             metadata = json.loads(metadata)
 
-        chunks.append({
-            "id": row["id"],
-            "content": row["content"],
-            "metadata": metadata,
-            "similarity": row["similarity"],
-        })
+        chunks.append(
+            {
+                "id": row["id"],
+                "content": row["content"],
+                "metadata": metadata,
+                "similarity": row["similarity"],
+            }
+        )
 
     return chunks

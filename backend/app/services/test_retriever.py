@@ -58,7 +58,6 @@ TEST_CASES: list[dict[str, str]] = [
         "expected": "Orthopedics",
         "note": "Sports injury presentation",
     },
-
     # ── Colloquial language (how patients actually talk) ─────
     {
         "query": "It feels like an elephant is sitting on my chest when I climb stairs",
@@ -95,7 +94,6 @@ TEST_CASES: list[dict[str, str]] = [
         "expected": "ENT",
         "note": "Ear infection in patient language",
     },
-
     # ── Ambiguous symptoms (multi-specialty overlap) ─────────
     {
         "query": "I feel dizzy and my heart races when I stand up",
@@ -112,7 +110,6 @@ TEST_CASES: list[dict[str, str]] = [
         "expected": "ENT",
         "note": "Common cold symptoms but persistent → ENT",
     },
-
     # ── Edge cases ───────────────────────────────────────────
     {
         "query": "I see little squiggly lines floating across my vision and sometimes bright flashes",
@@ -145,6 +142,7 @@ TEST_CASES: list[dict[str, str]] = [
 # ============================================================
 # TEST RUNNER
 # ============================================================
+
 
 def main() -> None:
     passed = 0
@@ -179,9 +177,7 @@ def main() -> None:
                 passed += 1
             else:
                 # Check if expected is in top 3 (partial credit)
-                all_specialties = [
-                    c["metadata"].get("specialty_name") for c in chunks
-                ]
+                all_specialties = [c["metadata"].get("specialty_name") for c in chunks]
                 if expected in all_specialties:
                     status = "SOFT"
                     passed += 1  # Count as pass — LLM will see it

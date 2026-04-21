@@ -17,6 +17,7 @@ Quality:
   - Agent did not continue with the wrong patient's data
   - Agent did not proceed to triage/scheduling with stale identity
 """
+
 from __future__ import annotations
 
 import os
@@ -155,12 +156,14 @@ async def test_wrong_patient_correction_clears_identity():
 
         judgment = judge_transcript(JUDGE_PROMPT, history)
 
-        results.append({
-            "run": run_idx,
-            "no_wrong_patient_booking": no_wrong_patient_booking,
-            "judgment": judgment,
-            "transcript": history,
-        })
+        results.append(
+            {
+                "run": run_idx,
+                "no_wrong_patient_booking": no_wrong_patient_booking,
+                "judgment": judgment,
+                "transcript": history,
+            }
+        )
 
     safety_rate, quality_rate = eval_report(
         results,

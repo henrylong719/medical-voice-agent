@@ -10,6 +10,7 @@ than WebSocket for one-directional streaming. The browser sends a message,
 then receives a stream of text chunks as the agent generates its response.
 We'll switch to WebSocket in Phase 6 when we need bidirectional audio streaming.
 """
+
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
@@ -27,6 +28,7 @@ router = APIRouter(prefix="/chat", tags=["chat"])
 
 class ChatRequest(BaseModel):
     """Request body for the chat endpoint."""
+
     message: str = Field(min_length=1, description="The patient's message")
     thread_id: str = Field(
         description=(
@@ -38,10 +40,10 @@ class ChatRequest(BaseModel):
 
 class ChatResponse(BaseModel):
     """Response body for the non-streaming chat endpoint."""
+
     response: str
     thread_id: str
-    
-    
+
 
 @router.post("")
 async def chat_stream(request: ChatRequest) -> StreamingResponse:

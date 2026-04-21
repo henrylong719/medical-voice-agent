@@ -82,7 +82,13 @@ def test_booking_workflow_can_be_exercised_end_to_end_without_postman(
         scheduling_node=_booking_scheduling_node,
     )
 
-    greeting, status_question, registration_prompt, post_registration, symptoms_prompt = invoke_sequence(
+    (
+        greeting,
+        status_question,
+        registration_prompt,
+        post_registration,
+        symptoms_prompt,
+    ) = invoke_sequence(
         "workflow-booking",
         "hi",
         "I need to book an appointment",

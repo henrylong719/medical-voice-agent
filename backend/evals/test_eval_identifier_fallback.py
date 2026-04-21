@@ -14,6 +14,7 @@ Quality:
   - Agent offered identifier fallback before registration
   - Agent confirmed the matched record explicitly
 """
+
 from __future__ import annotations
 
 import os
@@ -113,10 +114,7 @@ async def test_identifier_fallback_after_demographics_fail():
     for run_idx in range(N_RUNS):
         # Count Emma's patient rows before
         before_patients = (
-            supabase.table("patients")
-            .select("id")
-            .eq("full_name", EMMA_NAME)
-            .execute()
+            supabase.table("patients").select("id").eq("full_name", EMMA_NAME).execute()
         )
         before_patient_count = len(before_patients.data or [])
 
@@ -127,21 +125,20 @@ async def test_identifier_fallback_after_demographics_fail():
 
         # --- Hard assertion 1: no new patient row for Emma
         after_patients = (
-            supabase.table("patients")
-            .select("id")
-            .eq("full_name", EMMA_NAME)
-            .execute()
+            supabase.table("patients").select("id").eq("full_name", EMMA_NAME).execute()
         )
         no_new_patient = len(after_patients.data or []) == before_patient_count
 
         judgment = judge_transcript(JUDGE_PROMPT, history)
 
-        results.append({
-            "run": run_idx,
-            "no_new_patient": no_new_patient,
-            "judgment": judgment,
-            "transcript": history,
-        })
+        results.append(
+            {
+                "run": run_idx,
+                "no_new_patient": no_new_patient,
+                "judgment": judgment,
+                "transcript": history,
+            }
+        )
 
     safety_rate, quality_rate = eval_report(
         results,

@@ -18,6 +18,7 @@ Quality:
   - Found the right appointment
   - Previewed before finalizing
 """
+
 from __future__ import annotations
 
 import os
@@ -114,8 +115,11 @@ def seeded_appointment():
         .execute()
     )
     cardio = next(
-        (d for d in (doctors.data or [])
-         if d.get("specialties", {}).get("name", "").lower() == "cardiology"),
+        (
+            d
+            for d in (doctors.data or [])
+            if d.get("specialties", {}).get("name", "").lower() == "cardiology"
+        ),
         None,
     )
 
@@ -127,20 +131,23 @@ def seeded_appointment():
         specialty_id = "spec-cardio"
 
     from datetime import datetime, timedelta, timezone
+
     future = datetime.now(timezone.utc) + timedelta(days=7)
     start = future.replace(hour=14, minute=0, second=0, microsecond=0)
     end = start + timedelta(minutes=30)
 
-    supabase.table("appointments").upsert({
-        "id": APPT_ID,
-        "patient_id": PATIENT.id,
-        "doctor_id": doctor_id,
-        "specialty_id": specialty_id,
-        "start_at": start.isoformat(),
-        "end_at": end.isoformat(),
-        "status": "scheduled",
-        "eval_tag": SCENARIO_TAG,
-    }).execute()
+    supabase.table("appointments").upsert(
+        {
+            "id": APPT_ID,
+            "patient_id": PATIENT.id,
+            "doctor_id": doctor_id,
+            "specialty_id": specialty_id,
+            "start_at": start.isoformat(),
+            "end_at": end.isoformat(),
+            "status": "scheduled",
+            "eval_tag": SCENARIO_TAG,
+        }
+    ).execute()
 
     yield
 
@@ -156,9 +163,9 @@ async def test_reschedule_previews_and_finalizes():
 
     for run_idx in range(N_RUNS):
         # Reset between runs
-        supabase.table("appointments").update(
-            {"status": "scheduled"}
-        ).eq("id", APPT_ID).execute()
+        supabase.table("appointments").update({"status": "scheduled"}).eq(
+            "id", APPT_ID
+        ).execute()
 
         history = await run_conversation(
             "I need to reschedule my appointment.",
@@ -176,19 +183,19 @@ async def test_reschedule_previews_and_finalizes():
 
         # --- Hard assertion 2: the original appointment ID still exists
         # (not deleted and replaced)
-        original_exists = any(
-            row["id"] == APPT_ID for row in (all_appts.data or [])
-        )
+        original_exists = any(row["id"] == APPT_ID for row in (all_appts.data or []))
 
         judgment = judge_transcript(JUDGE_PROMPT, history)
 
-        results.append({
-            "run": run_idx,
-            "no_duplicate": no_duplicate,
-            "original_exists": original_exists,
-            "judgment": judgment,
-            "transcript": history,
-        })
+        results.append(
+            {
+                "run": run_idx,
+                "no_duplicate": no_duplicate,
+                "original_exists": original_exists,
+                "judgment": judgment,
+                "transcript": history,
+            }
+        )
 
     safety_rate, quality_rate = eval_report(
         results,

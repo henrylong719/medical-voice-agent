@@ -36,6 +36,7 @@ from app.services.rag_retriever import embed_texts
 # HELPERS
 # ============================================================
 
+
 def _get_openai_api_key() -> str:
     """Validate that the OpenAI API key is configured."""
     key = settings.openai_api_key.strip()
@@ -53,6 +54,7 @@ def _get_openai_api_key() -> str:
 # ============================================================
 # INGESTION
 # ============================================================
+
 
 def ingest_chunks() -> None:
     """
@@ -90,40 +92,52 @@ def ingest_chunks() -> None:
         if existing.data:
             row = cast(dict, existing.data[0])
             if row.get("embedding"):
-                print(f"  [{i}/{len(KNOWLEDGE_CHUNKS)}] Skip (already embedded): "
-                      f"{content[:60]}...")
+                print(
+                    f"  [{i}/{len(KNOWLEDGE_CHUNKS)}] Skip (already embedded): "
+                    f"{content[:60]}..."
+                )
                 continue
             else:
                 # Content exists but embedding is missing — need to embed
-                print(f"  [{i}/{len(KNOWLEDGE_CHUNKS)}] Exists, needs embedding: "
-                      f"{content[:60]}...")
-                chunks_to_embed.append({
-                    "id": row["id"],
-                    "content": content,
-                })
+                print(
+                    f"  [{i}/{len(KNOWLEDGE_CHUNKS)}] Exists, needs embedding: "
+                    f"{content[:60]}..."
+                )
+                chunks_to_embed.append(
+                    {
+                        "id": row["id"],
+                        "content": content,
+                    }
+                )
                 continue
 
         # Insert new chunk (without embedding — we'll batch-embed below)
         result = (
             supabase.table("medical_knowledge")
-            .insert({
-                "content": content,
-                "metadata": json.dumps(metadata) if isinstance(metadata, dict) else metadata,
-            })
+            .insert(
+                {
+                    "content": content,
+                    "metadata": json.dumps(metadata)
+                    if isinstance(metadata, dict)
+                    else metadata,
+                }
+            )
             .execute()
         )
 
         if result.data:
             row_id = cast(dict, result.data[0])["id"]
-            print(f"  [{i}/{len(KNOWLEDGE_CHUNKS)}] Inserted: "
-                  f"{content[:60]}...")
-            chunks_to_embed.append({
-                "id": row_id,
-                "content": content,
-            })
+            print(f"  [{i}/{len(KNOWLEDGE_CHUNKS)}] Inserted: {content[:60]}...")
+            chunks_to_embed.append(
+                {
+                    "id": row_id,
+                    "content": content,
+                }
+            )
         else:
-            print(f"  [{i}/{len(KNOWLEDGE_CHUNKS)}] FAILED to insert: "
-                  f"{content[:60]}...")
+            print(
+                f"  [{i}/{len(KNOWLEDGE_CHUNKS)}] FAILED to insert: {content[:60]}..."
+            )
 
     # ── Step 2: Batch embed ──────────────────────────────────
     if not chunks_to_embed:
@@ -144,9 +158,11 @@ def ingest_chunks() -> None:
 
     for chunk_info, embedding in zip(chunks_to_embed, embeddings):
         # pgvector expects the embedding as a JSON array string
-        supabase.table("medical_knowledge").update({
-            "embedding": embedding,
-        }).eq("id", chunk_info["id"]).execute()
+        supabase.table("medical_knowledge").update(
+            {
+                "embedding": embedding,
+            }
+        ).eq("id", chunk_info["id"]).execute()
 
     print(f"\nDone! {len(chunks_to_embed)} chunks embedded and saved.")
 

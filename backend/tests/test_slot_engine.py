@@ -127,7 +127,9 @@ def test_validate_slot_selection_rejects_non_template_time(
 
 def test_is_next_available_preference_recognizes_flexible_language() -> None:
     assert slot_engine._is_next_available_preference("I'm flexible") is True
-    assert slot_engine._is_next_available_preference("Whatever is available works") is True
+    assert (
+        slot_engine._is_next_available_preference("Whatever is available works") is True
+    )
     assert slot_engine._is_next_available_preference("No preference") is True
 
 

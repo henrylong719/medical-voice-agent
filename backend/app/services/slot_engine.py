@@ -43,32 +43,55 @@ from app.services.time_utils import (
 
 # Phrases that mean "just give me the soonest opening"
 NEXT_AVAILABLE_ALIASES = {
-    "next available", "next available day", "next available date",
-    "soonest", "earliest", "earliest available", "first available",
-    "as soon as possible", "asap",
-    "soonest available", "no preference", "flexible", "im flexible",
-    "i'm flexible", "any day", "any day works", "whenever",
-    "whatever is available", "whatever is open", "whatever's available",
-    "whatever's open", "whats available", "what's available",
-    "anything available", "anything open",
+    "next available",
+    "next available day",
+    "next available date",
+    "soonest",
+    "earliest",
+    "earliest available",
+    "first available",
+    "as soon as possible",
+    "asap",
+    "soonest available",
+    "no preference",
+    "flexible",
+    "im flexible",
+    "i'm flexible",
+    "any day",
+    "any day works",
+    "whenever",
+    "whatever is available",
+    "whatever is open",
+    "whatever's available",
+    "whatever's open",
+    "whats available",
+    "what's available",
+    "anything available",
+    "anything open",
 }
 
 # Day-of-week enum values in our DB → Python weekday numbers
 DAY_TO_WEEKDAY: dict[str, int] = {
-    "monday": 0, "tuesday": 1, "wednesday": 2, "thursday": 3,
-    "friday": 4, "saturday": 5, "sunday": 6,
+    "monday": 0,
+    "tuesday": 1,
+    "wednesday": 2,
+    "thursday": 3,
+    "friday": 4,
+    "saturday": 5,
+    "sunday": 6,
 }
 
 
 @dataclass
 class Slot:
     """A single available appointment slot (times stored in UTC)."""
+
     doctor_id: str
     doctor_name: str
     specialty_id: str
     specialty_name: str
     start_at: datetime  # UTC
-    end_at: datetime    # UTC
+    end_at: datetime  # UTC
 
     def to_dict(self) -> SlotDict:
         """Convert to a dict with voice-friendly labels."""
@@ -148,7 +171,10 @@ def _looks_like_specific_day_request(normalized: str) -> bool:
         "dec",
         "december",
     )
-    if any(re.search(rf"\b{re.escape(marker)}\b", normalized) for marker in specific_markers):
+    if any(
+        re.search(rf"\b{re.escape(marker)}\b", normalized)
+        for marker in specific_markers
+    ):
         return True
 
     return bool(
@@ -186,6 +212,7 @@ def _is_next_available_preference(preferred_day: str | None) -> bool:
 # ============================================================
 # PUBLIC API
 # ============================================================
+
 
 def find_slots_for_specialty(
     specialty_id: str,
@@ -292,7 +319,9 @@ def validate_slot_selection(
     now = now_utc()
     horizon = now + timedelta(days=settings.scheduling_horizon_days)
     if requested_start <= now or requested_end > horizon:
-        return "That appointment time is no longer bookable. Please choose another slot."
+        return (
+            "That appointment time is no longer bookable. Please choose another slot."
+        )
 
     doctor = _get_doctor(doctor_id)
     if not doctor:
@@ -300,7 +329,9 @@ def validate_slot_selection(
 
     specialty = _get_specialty(specialty_id)
     if not specialty:
-        return "That specialty is not available for booking. Please choose another slot."
+        return (
+            "That specialty is not available for booking. Please choose another slot."
+        )
 
     if not _doctor_has_specialty(doctor_id, specialty_id):
         return (
@@ -359,6 +390,7 @@ def validate_slot_selection(
 # ============================================================
 # CORE ALGORITHM
 # ============================================================
+
 
 def _compute_available_slots(
     doctor_id: str,
@@ -423,6 +455,7 @@ def _compute_available_slots(
 # ============================================================
 # DATA ACCESS
 # ============================================================
+
 
 def _get_doctors_for_specialty(specialty_id: str) -> list[DoctorSpecialtyRow]:
     """Fetch active doctors who practice a given specialty."""
@@ -549,6 +582,7 @@ def _get_doctor_blocks(
 # SLOT GENERATION & CONFLICT RESOLUTION
 # ============================================================
 
+
 def _generate_theoretical_slots(
     doctor_id: str,
     doctor_name: str,
@@ -594,10 +628,14 @@ def _generate_theoretical_slots(
 
             # Build clinic-local datetimes, convert to UTC
             window_start = datetime.combine(
-                current_date, tmpl_start, tzinfo=CLINIC_TZ,
+                current_date,
+                tmpl_start,
+                tzinfo=CLINIC_TZ,
             ).astimezone(timezone.utc)
             window_end = datetime.combine(
-                current_date, tmpl_end, tzinfo=CLINIC_TZ,
+                current_date,
+                tmpl_end,
+                tzinfo=CLINIC_TZ,
             ).astimezone(timezone.utc)
 
             slot_start = window_start
@@ -616,14 +654,16 @@ def _generate_theoretical_slots(
                     slot_start = slot_end
                     continue
 
-                slots.append(Slot(
-                    doctor_id=doctor_id,
-                    doctor_name=doctor_name,
-                    specialty_id=specialty_id,
-                    specialty_name=specialty_name,
-                    start_at=slot_start,
-                    end_at=slot_end,
-                ))
+                slots.append(
+                    Slot(
+                        doctor_id=doctor_id,
+                        doctor_name=doctor_name,
+                        specialty_id=specialty_id,
+                        specialty_name=specialty_name,
+                        start_at=slot_start,
+                        end_at=slot_end,
+                    )
+                )
 
                 slot_start = slot_end
 

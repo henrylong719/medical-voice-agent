@@ -142,6 +142,7 @@ async def cleanup_checkpointer() -> None:
 # GRAPH CONSTRUCTION
 # ============================================================
 
+
 def _route_from_supervisor(state: AgentState) -> str:
     """Conditional edge: read current_agent to decide the next node.
 
@@ -260,6 +261,7 @@ async def ensure_agent_ready() -> None:
 # TEXT EXTRACTION HELPER
 # ============================================================
 
+
 def _extract_text_content(content: Any) -> str:
     """Normalize LangChain message content into plain text.
 
@@ -294,6 +296,7 @@ def _extract_text_content(content: Any) -> str:
 # The signatures are identical to Phase 2 — the multi-agent
 # complexity is entirely hidden behind the same API.
 # ============================================================
+
 
 async def stream_agent_response(
     message: str,
@@ -357,7 +360,7 @@ async def invoke_agent(message: str, thread_id: str) -> str:
             new_start = i  # Keep updating — we want the LAST human message
 
     responses: list[str] = []
-    for msg in messages[new_start + 1:]:
+    for msg in messages[new_start + 1 :]:
         if not isinstance(msg, AIMessage):
             continue
         text = _extract_text_content(msg.content)

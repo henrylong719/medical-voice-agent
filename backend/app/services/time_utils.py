@@ -1,9 +1,9 @@
 """
 Time utilities for natural language date parsing and voice-friendly formatting.
- 
+
 Patients don't say "2026-04-07" — they say "next Tuesday morning."
 This module bridges that gap with:
- 
+
   parse_preferred_day()   → converts "next thurs", "feb 24", "2/24" to a DayRange
   parse_time_bucket()     → converts "morning" to a Bucket
   format_for_voice()      → converts a datetime to "Monday, April 7th at 9:30 AM"
@@ -31,29 +31,58 @@ Bucket = Literal["morning", "afternoon", "any"]
 CLINIC_TZ = ZoneInfo(settings.timezone)
 
 BUCKETS: dict[Bucket, tuple[time, time]] = {
-    "morning":   (time(8, 0),  time(12, 0)),
+    "morning": (time(8, 0), time(12, 0)),
     "afternoon": (time(12, 0), time(17, 0)),
-    "any":       (time(0, 0),  time(23, 59, 59)),
+    "any": (time(0, 0), time(23, 59, 59)),
 }
 
 # Supports abbreviations: "mon", "tue", "weds", "thurs", etc.
 WEEKDAY_MAP: dict[str, int] = {
-    "mon": 0, "monday": 0,
-    "tue": 1, "tues": 1, "tuesday": 1,
-    "wed": 2, "weds": 2, "wednesday": 2,
-    "thu": 3, "thur": 3, "thurs": 3, "thursday": 3,
-    "fri": 4, "friday": 4,
-    "sat": 5, "saturday": 5,
-    "sun": 6, "sunday": 6,
+    "mon": 0,
+    "monday": 0,
+    "tue": 1,
+    "tues": 1,
+    "tuesday": 1,
+    "wed": 2,
+    "weds": 2,
+    "wednesday": 2,
+    "thu": 3,
+    "thur": 3,
+    "thurs": 3,
+    "thursday": 3,
+    "fri": 4,
+    "friday": 4,
+    "sat": 5,
+    "saturday": 5,
+    "sun": 6,
+    "sunday": 6,
 }
 
 MONTH_MAP: dict[str, int] = {
-    "jan": 1, "january": 1, "feb": 2, "february": 2,
-    "mar": 3, "march": 3, "apr": 4, "april": 4,
-    "may": 5, "jun": 6, "june": 6, "jul": 7, "july": 7,
-    "aug": 8, "august": 8, "sep": 9, "sept": 9, "september": 9,
-    "oct": 10, "october": 10, "nov": 11, "november": 11,
-    "dec": 12, "december": 12,
+    "jan": 1,
+    "january": 1,
+    "feb": 2,
+    "february": 2,
+    "mar": 3,
+    "march": 3,
+    "apr": 4,
+    "april": 4,
+    "may": 5,
+    "jun": 6,
+    "june": 6,
+    "jul": 7,
+    "july": 7,
+    "aug": 8,
+    "august": 8,
+    "sep": 9,
+    "sept": 9,
+    "september": 9,
+    "oct": 10,
+    "october": 10,
+    "nov": 11,
+    "november": 11,
+    "dec": 12,
+    "december": 12,
 }
 
 
@@ -67,22 +96,26 @@ class DayRange:
 
     Exclusive end simplifies iteration: for d in range, d < end_date.
     """
+
     start_date: date  # inclusive
-    end_date: date    # exclusive
-    
+    end_date: date  # exclusive
+
+
 # ============================================================
 # HELPERS
 # ============================================================
 
+
 def now_utc() -> datetime:
     """Current time in UTC."""
     return datetime.now(timezone.utc)
-  
-  
+
+
 def now_clinic() -> datetime:
     """Current time in the clinic's local timezone."""
     return now_utc().astimezone(CLINIC_TZ)
-  
+
+
 def _normalize(s: str) -> str:
     """
     Clean up raw user input for reliable parsing.
@@ -99,7 +132,8 @@ def _normalize(s: str) -> str:
     s = re.sub(r"\b(\d{1,2})(st|nd|rd|th)\b", r"\1", s)
     s = s.replace("of ", "")
     return s.strip()
-  
+
+
 def _next_weekday(from_date: date, target: int, strictly_after: bool) -> date:
     """
     Find the next occurrence of a weekday.
@@ -113,7 +147,7 @@ def _next_weekday(from_date: date, target: int, strictly_after: bool) -> date:
     d = from_date + timedelta(days=1) if strictly_after else from_date
     days_ahead = (target - d.weekday()) % 7
     return d + timedelta(days=days_ahead)
-  
+
 
 def _parse_mmdd(s: str, year: int) -> date | None:
     """Parse numeric date formats: '2/24', '02/24', '02/24/2026'."""
@@ -127,7 +161,8 @@ def _parse_mmdd(s: str, year: int) -> date | None:
         return date(y, mm, dd)
     except ValueError:
         return None
-      
+
+
 def _parse_month_day(s: str, year: int) -> date | None:
     """
     Parse month-name date formats in either order:
@@ -135,8 +170,8 @@ def _parse_month_day(s: str, year: int) -> date | None:
         'feb 24 2027', '24 feb 2027'
     """
     for pattern in [
-        r"\b([a-z]+)\s+(\d{1,2})(?:\s+(\d{2,4}))?\b",   # "feb 24"
-        r"\b(\d{1,2})\s+([a-z]+)(?:\s+(\d{2,4}))?\b",    # "24 feb"
+        r"\b([a-z]+)\s+(\d{1,2})(?:\s+(\d{2,4}))?\b",  # "feb 24"
+        r"\b(\d{1,2})\s+([a-z]+)(?:\s+(\d{2,4}))?\b",  # "24 feb"
     ]:
         m = re.search(pattern, s)
         if not m:
@@ -160,6 +195,7 @@ def _parse_month_day(s: str, year: int) -> date | None:
 # ============================================================
 # DATE RANGE PARSING
 # ============================================================
+
 
 def parse_preferred_day(preferred_day: str | None) -> DayRange:
     """
@@ -237,10 +273,11 @@ def parse_preferred_day(preferred_day: str | None) -> DayRange:
     # Fallback: today only
     return DayRange(today, today + timedelta(days=1))
 
- 
+
 # ============================================================
 # TIME BUCKET PARSING
 # ============================================================
+
 
 def parse_time_bucket(preferred_time: str | None) -> Bucket:
     """
@@ -257,11 +294,12 @@ def parse_time_bucket(preferred_time: str | None) -> Bucket:
     if "after" in s or s == "pm":
         return "afternoon"
     return "any"
-  
+
 
 # ============================================================
 # UTC CONVERSION & BUCKET FILTERING
 # ============================================================
+
 
 def day_range_to_utc(dr: DayRange) -> tuple[datetime, datetime]:
     """
@@ -273,8 +311,8 @@ def day_range_to_utc(dr: DayRange) -> tuple[datetime, datetime]:
     start = datetime.combine(dr.start_date, time.min, tzinfo=CLINIC_TZ)
     end = datetime.combine(dr.end_date, time.min, tzinfo=CLINIC_TZ)
     return start.astimezone(timezone.utc), end.astimezone(timezone.utc)
-  
-  
+
+
 def is_in_bucket(start_utc: datetime, bucket: Bucket) -> bool:
     """
     Check if a UTC datetime falls within a time bucket in clinic-local time.
@@ -287,20 +325,20 @@ def is_in_bucket(start_utc: datetime, bucket: Bucket) -> bool:
     local = start_utc.astimezone(CLINIC_TZ)
     b_start, b_end = BUCKETS[bucket]
     return b_start <= local.time() < b_end
-  
-  
+
+
 # ============================================================
 # VOICE FORMATTING
 # ============================================================
+
 
 def _ordinal_suffix(day: int) -> str:
     """Return the ordinal suffix for a day number (1st, 2nd, 3rd, 4th...)."""
     if 11 <= day <= 13:
         return "th"
     return {1: "st", 2: "nd", 3: "rd"}.get(day % 10, "th")
-  
-  
-  
+
+
 def format_for_voice(dt: datetime | str) -> str:
     """
     Format a datetime for natural spoken output.
@@ -323,9 +361,11 @@ def format_for_voice(dt: datetime | str) -> str:
     # Format time — strip leading zero from hour
     time_str = local.strftime("%I:%M %p").lstrip("0")
 
-    return f"{local.strftime('%A')}, {local.strftime('%B')} {day}{ordinal} at {time_str}"
-  
-  
+    return (
+        f"{local.strftime('%A')}, {local.strftime('%B')} {day}{ordinal} at {time_str}"
+    )
+
+
 def format_date_for_voice(dt: datetime | date | str) -> str:
     """
     Format a date (without time) for voice output.

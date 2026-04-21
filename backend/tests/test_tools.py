@@ -42,7 +42,7 @@ def test_find_patient_by_identifier_returns_patient_details(
                         }
                     ]
                 ),
-            ]
+            ],
         }
     )
     monkeypatch.setattr(tools, "supabase", fake_supabase)
@@ -524,9 +524,7 @@ def test_register_patient_inserts_phone_when_provided(
             }
         ]
     )
-    fake_supabase = FakeSupabase(
-        tables={"patients": [lookup_query, insert_query]}
-    )
+    fake_supabase = FakeSupabase(tables={"patients": [lookup_query, insert_query]})
     monkeypatch.setattr(tools, "supabase", fake_supabase)
 
     result = tools.register_patient.invoke(
@@ -565,9 +563,7 @@ def test_register_patient_accepts_any_non_empty_phone_string(
             }
         ]
     )
-    fake_supabase = FakeSupabase(
-        tables={"patients": [lookup_query, insert_query]}
-    )
+    fake_supabase = FakeSupabase(tables={"patients": [lookup_query, insert_query]})
     monkeypatch.setattr(tools, "supabase", fake_supabase)
 
     result = tools.register_patient.invoke(
@@ -665,21 +661,20 @@ def test_triage_symptoms_combines_keyword_and_semantic_matches(
     )
     assert "=== Keyword Matches (from symptom database) ===" in result
     assert "Cardiology (ID: spec-cardio): score 7.00" in result
-    assert "Follow-up questions: Does it spread to your arm?; Is it worse with exertion?" in result
+    assert (
+        "Follow-up questions: Does it spread to your arm?; Is it worse with exertion?"
+        in result
+    )
     assert "=== Semantic Matches (from medical knowledge base) ===" in result
     assert "similarity 0.91" in result
 
 
 def test_triage_symptoms_returns_no_match_guidance(monkeypatch: MonkeyPatch) -> None:
-    fake_supabase = FakeSupabase(
-        tables={"symptom_specialty_map": [FakeQuery([])]}
-    )
+    fake_supabase = FakeSupabase(tables={"symptom_specialty_map": [FakeQuery([])]})
     monkeypatch.setattr(tools, "supabase", fake_supabase)
     monkeypatch.setattr(tools, "retrieve_medical_knowledge", lambda **_: [])
 
-    result = tools.triage_symptoms.invoke(
-        {"symptoms": ["fatigue"], "description": ""}
-    )
+    result = tools.triage_symptoms.invoke({"symptoms": ["fatigue"], "description": ""})
 
     assert "No specialty matches found for symptoms: fatigue." in result
     assert "use list_specialties to show available options" in result
@@ -713,7 +708,9 @@ def test_find_slots_formats_available_results(monkeypatch: MonkeyPatch) -> None:
             },
         ]
 
-    monkeypatch.setattr(tools, "find_slots_for_specialty", fake_find_slots_for_specialty)
+    monkeypatch.setattr(
+        tools, "find_slots_for_specialty", fake_find_slots_for_specialty
+    )
 
     result = tools.find_slots.invoke(
         {
@@ -794,9 +791,7 @@ def test_book_appointment_inserts_scheduled_visit(monkeypatch: MonkeyPatch) -> N
 
 
 def test_book_appointment_handles_insert_failure(monkeypatch: MonkeyPatch) -> None:
-    fake_supabase = FakeSupabase(
-        tables={"appointments": [FakeQuery([])]}
-    )
+    fake_supabase = FakeSupabase(tables={"appointments": [FakeQuery([])]})
     monkeypatch.setattr(tools, "supabase", fake_supabase)
     monkeypatch.setattr(tools, "validate_slot_selection", lambda **_: None)
 
@@ -819,7 +814,9 @@ def test_book_appointment_rejects_stale_slot_before_insert(
     monkeypatch.setattr(
         tools,
         "validate_slot_selection",
-        lambda **_: "That slot is no longer available. Please choose another available time.",
+        lambda **_: (
+            "That slot is no longer available. Please choose another available time."
+        ),
     )
 
     result = tools.book_appointment.invoke(
@@ -884,9 +881,7 @@ def test_find_appointment_filters_by_doctor_name(monkeypatch: MonkeyPatch) -> No
 
 
 def test_find_appointment_returns_empty_message(monkeypatch: MonkeyPatch) -> None:
-    fake_supabase = FakeSupabase(
-        tables={"appointments": [FakeQuery([])]}
-    )
+    fake_supabase = FakeSupabase(tables={"appointments": [FakeQuery([])]})
     monkeypatch.setattr(tools, "supabase", fake_supabase)
 
     result = tools.find_appointment.invoke({"patient_id": "patient-1"})
@@ -979,9 +974,7 @@ def test_reschedule_appointment_previews_without_cancelling(
             }
         ]
     )
-    fake_supabase = FakeSupabase(
-        tables={"appointments": [lookup_query]}
-    )
+    fake_supabase = FakeSupabase(tables={"appointments": [lookup_query]})
     monkeypatch.setattr(tools, "supabase", fake_supabase)
     monkeypatch.setattr(
         tools,
@@ -1015,7 +1008,9 @@ def test_reschedule_appointment_previews_without_cancelling(
 
     assert "Current appointment: Dr. Maya Chen (Cardiology)" in result
     assert "The current appointment has NOT been cancelled." in result
-    assert "Here are 1 alternative slot(s) with the same doctor for next week:" in result
+    assert (
+        "Here are 1 alternative slot(s) with the same doctor for next week:" in result
+    )
     assert "1. Monday, April 20th at 9:00 AM" in result
     assert "specialty_id: spec-cardio" in result
     assert ("eq", ("patient_id", "patient-1"), {}) in lookup_query.operations
@@ -1040,9 +1035,7 @@ def test_reschedule_appointment_preview_mentions_filters_and_avoids_double_dr(
             }
         ]
     )
-    fake_supabase = FakeSupabase(
-        tables={"appointments": [lookup_query]}
-    )
+    fake_supabase = FakeSupabase(tables={"appointments": [lookup_query]})
     monkeypatch.setattr(tools, "supabase", fake_supabase)
     monkeypatch.setattr(
         tools,
@@ -1063,7 +1056,10 @@ def test_reschedule_appointment_preview_mentions_filters_and_avoids_double_dr(
     assert "Current appointment: Dr. Maya Chen (Cardiology)" in result
     assert "Dr. Dr. Maya Chen" not in result
     assert "Search criteria: same doctor for next week in the afternoon." in result
-    assert "No available slots found with the same doctor for next week in the afternoon." in result
+    assert (
+        "No available slots found with the same doctor for next week in the afternoon."
+        in result
+    )
 
 
 def test_reschedule_appointment_finalizes_confirmed_slot(
@@ -1201,7 +1197,9 @@ def test_reschedule_appointment_keeps_original_when_new_slot_is_invalid(
     monkeypatch.setattr(
         tools,
         "validate_slot_selection",
-        lambda **_: "That slot is no longer available. Please choose another available time.",
+        lambda **_: (
+            "That slot is no longer available. Please choose another available time."
+        ),
     )
 
     result = tools.reschedule_appointment.invoke(
@@ -1224,9 +1222,7 @@ def test_reschedule_appointment_keeps_original_when_new_slot_is_invalid(
 def test_reschedule_appointment_handles_missing_or_cancelled_visits(
     monkeypatch: MonkeyPatch,
 ) -> None:
-    fake_supabase = FakeSupabase(
-        tables={"appointments": [FakeQuery([])]}
-    )
+    fake_supabase = FakeSupabase(tables={"appointments": [FakeQuery([])]})
     monkeypatch.setattr(tools, "supabase", fake_supabase)
 
     missing = tools.reschedule_appointment.invoke(
@@ -1279,9 +1275,7 @@ def test_cancel_appointment_updates_status(monkeypatch: MonkeyPatch) -> None:
         ]
     )
     update_query = FakeQuery([])
-    fake_supabase = FakeSupabase(
-        tables={"appointments": [lookup_query, update_query]}
-    )
+    fake_supabase = FakeSupabase(tables={"appointments": [lookup_query, update_query]})
     monkeypatch.setattr(tools, "supabase", fake_supabase)
     monkeypatch.setattr(
         tools,
@@ -1315,9 +1309,7 @@ def test_cancel_appointment_avoids_double_dr_title(monkeypatch: MonkeyPatch) -> 
         ]
     )
     update_query = FakeQuery([])
-    fake_supabase = FakeSupabase(
-        tables={"appointments": [lookup_query, update_query]}
-    )
+    fake_supabase = FakeSupabase(tables={"appointments": [lookup_query, update_query]})
     monkeypatch.setattr(tools, "supabase", fake_supabase)
     monkeypatch.setattr(
         tools,
@@ -1339,9 +1331,7 @@ def test_cancel_appointment_avoids_double_dr_title(monkeypatch: MonkeyPatch) -> 
 def test_cancel_appointment_handles_missing_or_cancelled_visits(
     monkeypatch: MonkeyPatch,
 ) -> None:
-    fake_supabase = FakeSupabase(
-        tables={"appointments": [FakeQuery([])]}
-    )
+    fake_supabase = FakeSupabase(tables={"appointments": [FakeQuery([])]})
     monkeypatch.setattr(tools, "supabase", fake_supabase)
 
     missing = tools.cancel_appointment.invoke(
@@ -1407,9 +1397,7 @@ def test_list_specialties_formats_rows(monkeypatch: MonkeyPatch) -> None:
 
 
 def test_list_specialties_returns_empty_message(monkeypatch: MonkeyPatch) -> None:
-    fake_supabase = FakeSupabase(
-        tables={"specialties": [FakeQuery([])]}
-    )
+    fake_supabase = FakeSupabase(tables={"specialties": [FakeQuery([])]})
     monkeypatch.setattr(tools, "supabase", fake_supabase)
 
     result = tools.list_specialties.invoke({})

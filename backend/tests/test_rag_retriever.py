@@ -42,7 +42,9 @@ def test_embed_texts_sorts_embeddings_by_index(monkeypatch: MonkeyPatch) -> None
             },
         )
 
-    monkeypatch.setattr(rag_retriever.settings, "openai_api_key", "test-key", raising=False)
+    monkeypatch.setattr(
+        rag_retriever.settings, "openai_api_key", "test-key", raising=False
+    )
     monkeypatch.setattr(rag_retriever.httpx, "post", fake_post)
 
     result = rag_retriever.embed_texts(["first", "second"])
@@ -58,7 +60,9 @@ def test_embed_texts_sorts_embeddings_by_index(monkeypatch: MonkeyPatch) -> None
 
 
 def test_embed_texts_raises_on_http_error(monkeypatch: MonkeyPatch) -> None:
-    monkeypatch.setattr(rag_retriever.settings, "openai_api_key", "test-key", raising=False)
+    monkeypatch.setattr(
+        rag_retriever.settings, "openai_api_key", "test-key", raising=False
+    )
     monkeypatch.setattr(
         rag_retriever.httpx,
         "post",
@@ -130,10 +134,10 @@ def test_retrieve_medical_knowledge_parses_rpc_rows(monkeypatch: MonkeyPatch) ->
     ]
 
 
-def test_retrieve_medical_knowledge_returns_empty_list(monkeypatch: MonkeyPatch) -> None:
-    fake_supabase = FakeSupabase(
-        rpcs={"match_medical_knowledge": [FakeQuery([])]}
-    )
+def test_retrieve_medical_knowledge_returns_empty_list(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    fake_supabase = FakeSupabase(rpcs={"match_medical_knowledge": [FakeQuery([])]})
     monkeypatch.setattr(rag_retriever, "supabase", fake_supabase)
     monkeypatch.setattr(rag_retriever, "embed_query", lambda query: [0.1, 0.2])
 

@@ -5,6 +5,7 @@ from typing import TypedDict
 
 class SlotDict(TypedDict):
     """Shape of a slot returned by the slot engine."""
+
     doctor_id: str
     doctor_name: str
     specialty_id: str

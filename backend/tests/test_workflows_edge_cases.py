@@ -6,6 +6,7 @@ switching, identity correction mid-flow, off-topic handling, and state
 assertion checks that verify the graph's internal state — not just
 response text.
 """
+
 from __future__ import annotations
 
 from langchain_core.messages import AIMessage
@@ -23,11 +24,14 @@ from tests.workflow_support import (
 
 # ── Reusable fake nodes ──────────────────────────────────────
 
+
 async def _simple_triage_node(state: AgentState) -> dict:
     latest = latest_human_text(state).lower()
     if "headache" in latest or "dizziness" in latest:
         return {
-            "messages": [AIMessage(content="Neurology seems like the right specialty.")],
+            "messages": [
+                AIMessage(content="Neurology seems like the right specialty.")
+            ],
             "specialty_id": "spec-neuro",
             "last_agent": "triage",
         }
@@ -54,7 +58,9 @@ def _make_returning_intake():
     async def fake_intake_node(state: AgentState) -> dict:
         latest = latest_human_text(state).lower()
 
-        if "sarah connor" in latest and ("1985-10-26" in latest or "10/26/1985" in latest):
+        if "sarah connor" in latest and (
+            "1985-10-26" in latest or "10/26/1985" in latest
+        ):
             return {
                 "messages": [
                     AIMessage(
@@ -116,7 +122,9 @@ def _make_new_patient_intake():
         if patient_status == "new":
             if "555-0100" in latest or ("sarah" in latest and "1985" in latest):
                 return {
-                    "messages": [AIMessage(content="Thanks, you're registered as Sarah Connor.")],
+                    "messages": [
+                        AIMessage(content="Thanks, you're registered as Sarah Connor.")
+                    ],
                     "patient_id": "patient-1",
                     "patient_name": "Sarah Connor",
                     "last_agent": "intake",
@@ -139,6 +147,7 @@ def _make_new_patient_intake():
 
 
 # ── Tests: multi-intent switching ─────────────────────────────
+
 
 def test_user_switches_from_cancel_to_booking_mid_flow(
     monkeypatch: MonkeyPatch,
@@ -195,9 +204,7 @@ def test_user_switches_from_reschedule_to_cancel(
         if intent == "cancel":
             return {
                 "messages": [
-                    AIMessage(
-                        content="Which appointment would you like to cancel?"
-                    )
+                    AIMessage(content="Which appointment would you like to cancel?")
                 ],
                 "last_agent": "scheduling",
             }
@@ -246,7 +253,9 @@ def test_user_switches_intent_twice_book_to_reschedule_to_cancel(
         intent = state.get("intent")
         if intent == "cancel":
             return {
-                "messages": [AIMessage(content="Which appointment would you like to cancel?")],
+                "messages": [
+                    AIMessage(content="Which appointment would you like to cancel?")
+                ],
                 "last_agent": "scheduling",
             }
         return {
@@ -288,6 +297,7 @@ def test_user_switches_intent_twice_book_to_reschedule_to_cancel(
 
 
 # ── Tests: identity correction mid-flow ───────────────────────
+
 
 def test_patient_denies_identity_and_retries(
     monkeypatch: MonkeyPatch,
@@ -378,6 +388,7 @@ def test_patient_denies_identity_and_retries(
 
 # ── Tests: conversation continuity after completed flow ───────
 
+
 def test_booking_complete_then_follow_up_reschedule(
     monkeypatch: MonkeyPatch,
 ) -> None:
@@ -390,9 +401,7 @@ def test_booking_complete_then_follow_up_reschedule(
         if intent == "reschedule":
             return {
                 "messages": [
-                    AIMessage(
-                        content="Which appointment would you like to reschedule?"
-                    )
+                    AIMessage(content="Which appointment would you like to reschedule?")
                 ],
                 "last_agent": "scheduling",
             }
@@ -433,6 +442,7 @@ def test_booking_complete_then_follow_up_reschedule(
 
 
 # ── Tests: new patient registration edge cases ────────────────
+
 
 def test_new_patient_full_registration_flow_with_triage_and_scheduling(
     monkeypatch: MonkeyPatch,
@@ -482,6 +492,7 @@ def test_new_patient_full_registration_flow_with_triage_and_scheduling(
 
 # ── Tests: negative assertions (things that should NOT happen) ────
 
+
 def test_scheduling_does_not_appear_before_triage_completes(
     monkeypatch: MonkeyPatch,
 ) -> None:
@@ -490,9 +501,7 @@ def test_scheduling_does_not_appear_before_triage_completes(
     async def fake_triage_node(state: AgentState) -> dict:
         return {
             "messages": [
-                AIMessage(
-                    content="Can you describe your symptoms in more detail?"
-                )
+                AIMessage(content="Can you describe your symptoms in more detail?")
             ],
             "last_agent": "triage",
         }
@@ -536,9 +545,7 @@ def test_triage_does_not_run_for_reschedule_intent(
     async def fake_scheduling_node(state: AgentState) -> dict:
         return {
             "messages": [
-                AIMessage(
-                    content="Which appointment would you like to reschedule?"
-                )
+                AIMessage(content="Which appointment would you like to reschedule?")
             ],
             "last_agent": "scheduling",
         }
@@ -575,9 +582,7 @@ def test_triage_does_not_run_for_cancel_intent(
     async def fake_scheduling_node(state: AgentState) -> dict:
         return {
             "messages": [
-                AIMessage(
-                    content="Which appointment would you like to cancel?"
-                )
+                AIMessage(content="Which appointment would you like to cancel?")
             ],
             "last_agent": "scheduling",
         }
@@ -601,6 +606,7 @@ def test_triage_does_not_run_for_cancel_intent(
 
 
 # ── Tests: reschedule/cancel skip visit status question ───────
+
 
 def test_reschedule_skips_new_or_returning_question(
     monkeypatch: MonkeyPatch,
@@ -656,6 +662,7 @@ def test_cancel_skips_new_or_returning_question(
 
 # ── Tests: greeting behavior ─────────────────────────────────
 
+
 def test_greeting_always_appears_first_regardless_of_message(
     monkeypatch: MonkeyPatch,
 ) -> None:
@@ -668,7 +675,9 @@ def test_greeting_always_appears_first_regardless_of_message(
         scheduling_node=_simple_scheduling_node,
     )
 
-    greeting = invoke_turn("I need to book an appointment", "workflow-greeting-with-intent")
+    greeting = invoke_turn(
+        "I need to book an appointment", "workflow-greeting-with-intent"
+    )
 
     assert "Welcome to the clinic" in greeting
 
@@ -696,6 +705,7 @@ def test_second_message_after_greeting_triggers_intent_classification(
 
 
 # ── Tests: returning patient with identifier fallback ─────────
+
 
 def test_returning_patient_identifier_lookup_succeeds_after_demographics_fail(
     monkeypatch: MonkeyPatch,

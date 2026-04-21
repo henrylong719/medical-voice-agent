@@ -87,9 +87,7 @@ def install_test_graph(
     monkeypatch.setattr(agent_graph, "triage_node", triage_node)
     monkeypatch.setattr(agent_graph, "scheduling_node", scheduling_node)
 
-    compiled_graph = agent_graph._build_graph().compile(
-        checkpointer=InMemorySaver()
-    )
+    compiled_graph = agent_graph._build_graph().compile(checkpointer=InMemorySaver())
 
     async def fake_get_or_build_graph():
         return compiled_graph

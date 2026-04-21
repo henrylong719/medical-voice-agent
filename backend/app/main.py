@@ -1,9 +1,10 @@
 """
 FastAPI application entry point.
- 
+
 Run with: uvicorn app.main:app --reload
 The --reload flag watches for file changes during development.
 """
+
 import logging
 
 logging.basicConfig(
@@ -55,17 +56,17 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-	title="Medical Voice Agent API",
-	description="Backend API for the medical voice scheduling agent",
- 	version="0.1.0",
-	lifespan=lifespan,
+    title="Medical Voice Agent API",
+    description="Backend API for the medical voice scheduling agent",
+    version="0.1.0",
+    lifespan=lifespan,
 )
 
 # CORS middleware — allows the frontend (browser) to call our API.
 # In production, you'd restrict origins to your actual domain.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],           # allow all origins during development
+    allow_origins=["*"],  # allow all origins during development
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

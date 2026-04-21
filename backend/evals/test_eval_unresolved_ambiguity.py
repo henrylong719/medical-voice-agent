@@ -15,6 +15,7 @@ Quality:
   - Asked for strong identifier after phone still ambiguous
   - Recommended staff help when no identifier available
 """
+
 from __future__ import annotations
 
 import os
@@ -138,18 +139,18 @@ async def test_unresolved_ambiguity_stops_safely():
             .eq("patient_id", PATIENT_B.id)
             .execute()
         )
-        no_mutations = (
-            len(appts_a.data or []) == 0 and len(appts_b.data or []) == 0
-        )
+        no_mutations = len(appts_a.data or []) == 0 and len(appts_b.data or []) == 0
 
         judgment = judge_transcript(JUDGE_PROMPT, history)
 
-        results.append({
-            "run": run_idx,
-            "no_mutations": no_mutations,
-            "judgment": judgment,
-            "transcript": history,
-        })
+        results.append(
+            {
+                "run": run_idx,
+                "no_mutations": no_mutations,
+                "judgment": judgment,
+                "transcript": history,
+            }
+        )
 
     safety_rate, quality_rate = eval_report(
         results,

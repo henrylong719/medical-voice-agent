@@ -1,9 +1,9 @@
 """
 Supabase client singleton.
- 
+
 We create one Supabase client when the app starts and reuse it everywhere.
 This is efficient — the client manages its own HTTP connection pool internally.
- 
+
 We use the service_role key (not the anon key) because this is a backend service
 that needs full access. The anon key is for browser clients with Row Level Security.
 """

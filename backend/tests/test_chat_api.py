@@ -47,7 +47,10 @@ def test_chat_invoke_supports_multi_turn_memory_over_http(
                 "last_agent": "intake",
             }
 
-        return {"messages": [AIMessage(content="Let's verify your record.")], "last_agent": "intake"}
+        return {
+            "messages": [AIMessage(content="Let's verify your record.")],
+            "last_agent": "intake",
+        }
 
     async def fake_triage_node(state: AgentState) -> dict:
         latest = latest_human_text(state).lower()
@@ -120,7 +123,10 @@ def test_chat_invoke_supports_multi_turn_memory_over_http(
     )
 
     assert post_registration.status_code == 200
-    assert "Thanks, you're registered as Sarah Connor." in post_registration.json()["response"]
+    assert (
+        "Thanks, you're registered as Sarah Connor."
+        in post_registration.json()["response"]
+    )
     assert "What symptoms are you having?" in post_registration.json()["response"]
 
 
@@ -169,7 +175,9 @@ def test_chat_stream_returns_sse_chunks_and_done_marker(
         yield " there"
 
     monkeypatch.setattr(chat_routes, "ensure_agent_ready", fake_ensure_agent_ready)
-    monkeypatch.setattr(chat_routes, "stream_agent_response", fake_stream_agent_response)
+    monkeypatch.setattr(
+        chat_routes, "stream_agent_response", fake_stream_agent_response
+    )
 
     with TestClient(app) as client:
         with client.stream(

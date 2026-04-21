@@ -17,6 +17,7 @@ Quality (LLM judge):
   - Triage happened before scheduling
   - Explicit booking confirmation before mutation
 """
+
 from __future__ import annotations
 
 import os
@@ -170,14 +171,16 @@ async def test_new_patient_booking_end_to_end():
 
         judgment = judge_transcript(JUDGE_PROMPT, history)
 
-        results.append({
-            "run": run_idx,
-            "exactly_one_patient": exactly_one_patient,
-            "patient_has_phone": patient_has_phone,
-            "exactly_one_appointment": exactly_one_appointment,
-            "judgment": judgment,
-            "transcript": history,
-        })
+        results.append(
+            {
+                "run": run_idx,
+                "exactly_one_patient": exactly_one_patient,
+                "patient_has_phone": patient_has_phone,
+                "exactly_one_appointment": exactly_one_appointment,
+                "judgment": judgment,
+                "transcript": history,
+            }
+        )
 
         # Clean up between runs
         cleanup_by_tag(SCENARIO_TAG)

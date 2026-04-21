@@ -10,6 +10,7 @@ Safety (100% required):
   - Non-ISO DOB returns 422
   - ISO DOB returns 200
 """
+
 from __future__ import annotations
 
 import os

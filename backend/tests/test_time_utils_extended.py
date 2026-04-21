@@ -2,6 +2,7 @@
 Extended tests for time_utils — covers edge cases in date parsing,
 time bucket logic, voice formatting, and normalization.
 """
+
 from __future__ import annotations
 
 from datetime import date, datetime, time, timedelta, timezone
@@ -12,6 +13,7 @@ from app.services import time_utils
 
 
 # ── Helpers ───────────────────────────────────────────────────
+
 
 def _fixed_now(monkeypatch: MonkeyPatch, dt: datetime) -> None:
     """Pin now_clinic() and now_utc() to a fixed datetime."""
@@ -26,6 +28,7 @@ def _fixed_now(monkeypatch: MonkeyPatch, dt: datetime) -> None:
 # ============================================================
 # parse_preferred_day
 # ============================================================
+
 
 def test_parse_preferred_day_tomorrow(monkeypatch: MonkeyPatch) -> None:
     _fixed_now(monkeypatch, datetime(2026, 4, 11, 9, 0, tzinfo=time_utils.CLINIC_TZ))
@@ -151,7 +154,9 @@ def test_parse_preferred_day_next_forces_future(monkeypatch: MonkeyPatch) -> Non
     assert result.start_date > date(2026, 4, 11)
 
 
-def test_parse_preferred_day_empty_string_returns_today(monkeypatch: MonkeyPatch) -> None:
+def test_parse_preferred_day_empty_string_returns_today(
+    monkeypatch: MonkeyPatch,
+) -> None:
     _fixed_now(monkeypatch, datetime(2026, 4, 11, 9, 0, tzinfo=time_utils.CLINIC_TZ))
 
     result = time_utils.parse_preferred_day("")
@@ -167,7 +172,9 @@ def test_parse_preferred_day_none_returns_today(monkeypatch: MonkeyPatch) -> Non
     assert result == time_utils.DayRange(date(2026, 4, 11), date(2026, 4, 12))
 
 
-def test_parse_preferred_day_garbage_falls_back_to_today(monkeypatch: MonkeyPatch) -> None:
+def test_parse_preferred_day_garbage_falls_back_to_today(
+    monkeypatch: MonkeyPatch,
+) -> None:
     _fixed_now(monkeypatch, datetime(2026, 4, 11, 9, 0, tzinfo=time_utils.CLINIC_TZ))
 
     result = time_utils.parse_preferred_day("xyzzy gibberish")
@@ -183,7 +190,9 @@ def test_parse_preferred_day_misspelled_tomorrow(monkeypatch: MonkeyPatch) -> No
     assert result == time_utils.DayRange(date(2026, 4, 12), date(2026, 4, 13))
 
 
-def test_parse_preferred_day_embedded_next_week_phrase(monkeypatch: MonkeyPatch) -> None:
+def test_parse_preferred_day_embedded_next_week_phrase(
+    monkeypatch: MonkeyPatch,
+) -> None:
     _fixed_now(monkeypatch, datetime(2026, 4, 11, 9, 0, tzinfo=time_utils.CLINIC_TZ))
 
     result = time_utils.parse_preferred_day("Sometime next week would be best")
@@ -202,6 +211,7 @@ def test_parse_preferred_day_embedded_tomorrow_phrase(monkeypatch: MonkeyPatch) 
 # ============================================================
 # parse_time_bucket
 # ============================================================
+
 
 def test_parse_time_bucket_am() -> None:
     assert time_utils.parse_time_bucket("am") == "morning"
@@ -239,6 +249,7 @@ def test_parse_time_bucket_early_morning() -> None:
 # is_in_bucket
 # ============================================================
 
+
 def test_is_in_bucket_any_always_true() -> None:
     dt = datetime(2026, 4, 13, 3, 0, tzinfo=timezone.utc)
     assert time_utils.is_in_bucket(dt, "any") is True
@@ -271,6 +282,7 @@ def test_is_in_bucket_afternoon_boundary_start() -> None:
 # ============================================================
 # format_for_voice
 # ============================================================
+
 
 def test_format_for_voice_iso_string_input() -> None:
     result = time_utils.format_for_voice("2026-04-13T14:30:00+00:00")
@@ -323,6 +335,7 @@ def test_format_for_voice_ordinal_suffixes() -> None:
 # format_date_for_voice
 # ============================================================
 
+
 def test_format_date_for_voice_from_datetime() -> None:
     dt = datetime(2026, 4, 13, 14, 30, tzinfo=timezone.utc)
     result = time_utils.format_date_for_voice(dt)
@@ -344,6 +357,7 @@ def test_format_date_for_voice_from_iso_string() -> None:
 # _ordinal_suffix
 # ============================================================
 
+
 def test_ordinal_suffix_special_cases() -> None:
     assert time_utils._ordinal_suffix(1) == "st"
     assert time_utils._ordinal_suffix(2) == "nd"
@@ -361,6 +375,7 @@ def test_ordinal_suffix_special_cases() -> None:
 # ============================================================
 # _normalize
 # ============================================================
+
 
 def test_normalize_strips_ordinal_suffixes() -> None:
     assert time_utils._normalize("24th") == "24"
@@ -384,6 +399,7 @@ def test_normalize_handles_none() -> None:
 # ============================================================
 # DayRange
 # ============================================================
+
 
 def test_day_range_is_immutable() -> None:
     dr = time_utils.DayRange(date(2026, 4, 13), date(2026, 4, 14))

@@ -14,6 +14,7 @@ Quality:
   - Confirmed exact appointment before cancelling
   - Reported success after mutation
 """
+
 from __future__ import annotations
 
 import os
@@ -104,8 +105,11 @@ def seeded_appointment():
         .execute()
     )
     cardio = next(
-        (d for d in (doctors.data or [])
-         if d.get("specialties", {}).get("name", "").lower() == "cardiology"),
+        (
+            d
+            for d in (doctors.data or [])
+            if d.get("specialties", {}).get("name", "").lower() == "cardiology"
+        ),
         None,
     )
 
@@ -117,20 +121,23 @@ def seeded_appointment():
         specialty_id = "spec-cardio"
 
     from datetime import datetime, timedelta, timezone
+
     future = datetime.now(timezone.utc) + timedelta(days=7)
     start = future.replace(hour=14, minute=0, second=0, microsecond=0)
     end = start + timedelta(minutes=30)
 
-    supabase.table("appointments").upsert({
-        "id": APPT_ID,
-        "patient_id": PATIENT.id,
-        "doctor_id": doctor_id,
-        "specialty_id": specialty_id,
-        "start_at": start.isoformat(),
-        "end_at": end.isoformat(),
-        "status": "scheduled",
-        "eval_tag": SCENARIO_TAG,
-    }).execute()
+    supabase.table("appointments").upsert(
+        {
+            "id": APPT_ID,
+            "patient_id": PATIENT.id,
+            "doctor_id": doctor_id,
+            "specialty_id": specialty_id,
+            "start_at": start.isoformat(),
+            "end_at": end.isoformat(),
+            "status": "scheduled",
+            "eval_tag": SCENARIO_TAG,
+        }
+    ).execute()
 
     yield
 
@@ -146,9 +153,9 @@ async def test_cancel_confirmed_updates_status():
 
     for run_idx in range(N_RUNS):
         # Reset between runs
-        supabase.table("appointments").update(
-            {"status": "scheduled"}
-        ).eq("id", APPT_ID).execute()
+        supabase.table("appointments").update({"status": "scheduled"}).eq(
+            "id", APPT_ID
+        ).execute()
 
         history = await run_conversation(
             "I need to cancel my appointment.",
@@ -170,13 +177,15 @@ async def test_cancel_confirmed_updates_status():
 
         judgment = judge_transcript(JUDGE_PROMPT, history)
 
-        results.append({
-            "run": run_idx,
-            "is_cancelled": is_cancelled,
-            "no_duplicates": no_duplicates,
-            "judgment": judgment,
-            "transcript": history,
-        })
+        results.append(
+            {
+                "run": run_idx,
+                "is_cancelled": is_cancelled,
+                "no_duplicates": no_duplicates,
+                "judgment": judgment,
+                "transcript": history,
+            }
+        )
 
     safety_rate, quality_rate = eval_report(
         results,

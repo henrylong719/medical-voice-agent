@@ -58,6 +58,7 @@ Respond with EXACTLY one word:
 # SHARED LLM BUILDER
 # ============================================================
 
+
 def _build_llm() -> ChatAnthropic:
     """Build a Claude instance shared by all sub-agents."""
     return ChatAnthropic(
@@ -493,7 +494,9 @@ async def _classify_identity_reply_with_llm(
     return None
 
 
-async def _confirmed_patient_from_history(messages: list[Any]) -> tuple[str, str] | None:
+async def _confirmed_patient_from_history(
+    messages: list[Any],
+) -> tuple[str, str] | None:
     """Recover the latest matched patient once the human explicitly confirms."""
     latest_human_index: int | None = None
 
@@ -662,6 +665,7 @@ def _get_scheduling_agent() -> Any:
 # existing history — returning all would create duplicates.
 # ============================================================
 
+
 async def intake_node(state: AgentState) -> dict:
     """Run the Intake Agent and extract patient identity from results.
 
@@ -735,8 +739,7 @@ async def intake_node(state: AgentState) -> dict:
             existing_record_reused = True
 
     confirmed_this_turn = (
-        confirmed_patient is not None
-        and state.get("patient_id") is None
+        confirmed_patient is not None and state.get("patient_id") is None
     )
 
     if confirmation_prompt_text is not None:
@@ -903,12 +906,9 @@ async def scheduling_node(state: AgentState) -> dict:
             continue
 
         # Detect successful booking or finalized reschedule
-        if (
-            "Appointment ID: " in msg.content
-            and (
-                "booked successfully" in msg.content
-                or "rescheduled successfully" in msg.content
-            )
+        if "Appointment ID: " in msg.content and (
+            "booked successfully" in msg.content
+            or "rescheduled successfully" in msg.content
         ):
             id_start = msg.content.index("Appointment ID: ") + 16
             id_end = msg.content.index(".", id_start)

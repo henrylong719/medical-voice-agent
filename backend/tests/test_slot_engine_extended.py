@@ -3,6 +3,7 @@ Extended tests for slot_engine — covers slot generation, conflict
 subtraction, doctor blocks, booked-slot exclusion, and validation
 edge cases.
 """
+
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
@@ -14,6 +15,7 @@ from tests.support import FakeQuery, FakeSupabase
 
 
 # ── Helpers ───────────────────────────────────────────────────
+
 
 def _fixed_now(monkeypatch: MonkeyPatch, dt: datetime) -> None:
     monkeypatch.setattr(slot_engine, "now_utc", lambda: dt)
@@ -44,7 +46,9 @@ def _stub_no_conflicts(monkeypatch: MonkeyPatch) -> None:
     monkeypatch.setattr(slot_engine, "_get_doctor_blocks", lambda *_, **__: [])
 
 
-def _monday_template(start: str = "09:00:00", end: str = "12:00:00", duration: int = 30):
+def _monday_template(
+    start: str = "09:00:00", end: str = "12:00:00", duration: int = 30
+):
     return {
         "day_of_week": "monday",
         "start_time": start,
@@ -60,6 +64,7 @@ def _stub_templates(monkeypatch: MonkeyPatch, templates: list[dict]) -> None:
 # ============================================================
 # _get_booked_slots
 # ============================================================
+
 
 def test_get_booked_slots_returns_empty_when_no_appointments(
     monkeypatch: MonkeyPatch,
@@ -142,6 +147,7 @@ def test_get_booked_slots_parses_multiple_rows(
 # _get_doctor_blocks
 # ============================================================
 
+
 def test_get_doctor_blocks_returns_parsed_ranges(
     monkeypatch: MonkeyPatch,
 ) -> None:
@@ -187,6 +193,7 @@ def test_get_doctor_blocks_empty_when_none(
 # ============================================================
 # _subtract_conflicts
 # ============================================================
+
 
 def test_subtract_conflicts_removes_exact_booked_match() -> None:
     slot = slot_engine.Slot(
@@ -272,19 +279,25 @@ def test_subtract_conflicts_keeps_non_conflicting_slots() -> None:
 
 def test_subtract_conflicts_mixed_booked_and_blocks() -> None:
     slot1 = slot_engine.Slot(
-        doctor_id="d1", doctor_name="Chen", specialty_id="s1",
+        doctor_id="d1",
+        doctor_name="Chen",
+        specialty_id="s1",
         specialty_name="Cardiology",
         start_at=datetime(2026, 4, 13, 14, 0, tzinfo=timezone.utc),
         end_at=datetime(2026, 4, 13, 14, 30, tzinfo=timezone.utc),
     )
     slot2 = slot_engine.Slot(
-        doctor_id="d1", doctor_name="Chen", specialty_id="s1",
+        doctor_id="d1",
+        doctor_name="Chen",
+        specialty_id="s1",
         specialty_name="Cardiology",
         start_at=datetime(2026, 4, 13, 14, 30, tzinfo=timezone.utc),
         end_at=datetime(2026, 4, 13, 15, 0, tzinfo=timezone.utc),
     )
     slot3 = slot_engine.Slot(
-        doctor_id="d1", doctor_name="Chen", specialty_id="s1",
+        doctor_id="d1",
+        doctor_name="Chen",
+        specialty_id="s1",
         specialty_name="Cardiology",
         start_at=datetime(2026, 4, 13, 15, 0, tzinfo=timezone.utc),
         end_at=datetime(2026, 4, 13, 15, 30, tzinfo=timezone.utc),
@@ -302,6 +315,7 @@ def test_subtract_conflicts_mixed_booked_and_blocks() -> None:
 # ============================================================
 # Slot.to_dict
 # ============================================================
+
 
 def test_slot_to_dict_includes_all_fields() -> None:
     slot = slot_engine.Slot(
@@ -328,6 +342,7 @@ def test_slot_to_dict_includes_all_fields() -> None:
 # ============================================================
 # validate_slot_selection — extended edge cases
 # ============================================================
+
 
 def test_validate_slot_rejects_invalid_iso_format(monkeypatch: MonkeyPatch) -> None:
     result = slot_engine.validate_slot_selection(
@@ -410,7 +425,9 @@ def test_validate_slot_rejects_missing_specialty(monkeypatch: MonkeyPatch) -> No
     assert "specialty is not available" in result.lower()
 
 
-def test_validate_slot_rejects_doctor_without_specialty(monkeypatch: MonkeyPatch) -> None:
+def test_validate_slot_rejects_doctor_without_specialty(
+    monkeypatch: MonkeyPatch,
+) -> None:
     _fixed_now(monkeypatch, datetime(2026, 4, 11, 12, 0, tzinfo=timezone.utc))
     _stub_doctor(monkeypatch)
     _stub_specialty(monkeypatch)
@@ -493,6 +510,7 @@ def test_validate_slot_rejects_blocked_slot(monkeypatch: MonkeyPatch) -> None:
 # find_slots_for_doctor
 # ============================================================
 
+
 def test_find_slots_for_doctor_returns_empty_when_doctor_missing(
     monkeypatch: MonkeyPatch,
 ) -> None:
@@ -510,6 +528,7 @@ def test_find_slots_for_doctor_returns_empty_when_doctor_missing(
 # find_slots_for_specialty
 # ============================================================
 
+
 def test_find_slots_for_specialty_returns_empty_when_no_doctors(
     monkeypatch: MonkeyPatch,
 ) -> None:
@@ -523,6 +542,7 @@ def test_find_slots_for_specialty_returns_empty_when_no_doctors(
 # ============================================================
 # NEXT_AVAILABLE_ALIASES
 # ============================================================
+
 
 def test_next_available_aliases_are_lowercase() -> None:
     for alias in slot_engine.NEXT_AVAILABLE_ALIASES:

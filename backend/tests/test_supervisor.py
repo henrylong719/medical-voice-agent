@@ -74,7 +74,9 @@ def test_classify_intent_returns_normalized_label(monkeypatch: MonkeyPatch) -> N
     assert result == "reschedule"
 
 
-def test_classify_intent_returns_none_for_unknown_response(monkeypatch: MonkeyPatch) -> None:
+def test_classify_intent_returns_none_for_unknown_response(
+    monkeypatch: MonkeyPatch,
+) -> None:
     class FakeLLM:
         def __init__(self, **kwargs: Any) -> None:
             self.kwargs = kwargs
@@ -129,7 +131,9 @@ def test_supervisor_routes_to_intake_after_patient_status_is_known() -> None:
                     HumanMessage(content="hi"),
                     AIMessage(content="Hello! Welcome to the clinic."),
                     HumanMessage(content="I'd like to make an appointment"),
-                    AIMessage(content="Have you been seen at this clinic before, or is this your first visit?"),
+                    AIMessage(
+                        content="Have you been seen at this clinic before, or is this your first visit?"
+                    ),
                     HumanMessage(content="yes, I've been there before"),
                 ],
             )
@@ -150,7 +154,9 @@ def test_supervisor_classifies_i_came_before_as_returning() -> None:
                     HumanMessage(content="hi"),
                     AIMessage(content="Hello! Welcome to the clinic."),
                     HumanMessage(content="I'd like to make an appointment"),
-                    AIMessage(content="Have you been seen at this clinic before, or is this your first visit?"),
+                    AIMessage(
+                        content="Have you been seen at this clinic before, or is this your first visit?"
+                    ),
                     HumanMessage(content="I came before"),
                 ],
             )
@@ -189,7 +195,9 @@ def test_supervisor_uses_llm_fallback_for_patient_status(
                     HumanMessage(content="hi"),
                     AIMessage(content="Hello! Welcome to the clinic."),
                     HumanMessage(content="I'd like to make an appointment"),
-                    AIMessage(content="Have you been seen at this clinic before, or is this your first visit?"),
+                    AIMessage(
+                        content="Have you been seen at this clinic before, or is this your first visit?"
+                    ),
                     HumanMessage(content="I visited before"),
                 ],
             )
@@ -221,7 +229,9 @@ def test_supervisor_routes_identity_correction_back_to_intake(
                     HumanMessage(content="hi"),
                     AIMessage(content="Hello! Welcome to the clinic."),
                     HumanMessage(content="I have headaches"),
-                    AIMessage(content="I found Henry Long born on 1990-01-02 on file — is that you?"),
+                    AIMessage(
+                        content="I found Henry Long born on 1990-01-02 on file — is that you?"
+                    ),
                     HumanMessage(content="no sorry that's the wrong patient"),
                 ],
             )
@@ -267,7 +277,9 @@ def test_supervisor_routes_llm_detected_identity_correction_back_to_intake(
                     HumanMessage(content="hi"),
                     AIMessage(content="Hello! Welcome to the clinic."),
                     HumanMessage(content="I have headaches"),
-                    AIMessage(content="I found Henry Long born on 1990-01-02 on file — is that you?"),
+                    AIMessage(
+                        content="I found Henry Long born on 1990-01-02 on file — is that you?"
+                    ),
                     HumanMessage(content="The date of birth is wrong."),
                 ],
             )
@@ -301,7 +313,9 @@ def test_supervisor_re_runs_after_classifying_intent(monkeypatch: MonkeyPatch) -
     }
 
 
-def test_supervisor_asks_for_intent_when_still_unclear(monkeypatch: MonkeyPatch) -> None:
+def test_supervisor_asks_for_intent_when_still_unclear(
+    monkeypatch: MonkeyPatch,
+) -> None:
     async def fake_classify(state: AgentState) -> str | None:
         return None
 
@@ -385,7 +399,9 @@ def test_supervisor_detects_explicit_intent_change_mid_flow() -> None:
             AIMessage(content="Hello! Welcome to the clinic."),
             HumanMessage(content="I'd like to make an appointment"),
             AIMessage(content="Do you have a particular type of specialist in mind?"),
-            HumanMessage(content="sorry actually i'd like to reschedule an appointment"),
+            HumanMessage(
+                content="sorry actually i'd like to reschedule an appointment"
+            ),
         ],
         symptoms=["headache"],
         specialty_id="spec-neuro",

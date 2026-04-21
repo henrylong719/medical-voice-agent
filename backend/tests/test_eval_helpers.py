@@ -25,7 +25,9 @@ Extra commentary that should be ignored.
 
 
 @pytest.mark.asyncio
-async def test_run_conversation_calls_after_agent_turn_hook(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_run_conversation_calls_after_agent_turn_hook(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     replies = iter(
         [
             "I'll book you for Monday, April 20th at 9:00 AM. Shall I confirm?",
@@ -68,7 +70,9 @@ async def test_run_conversation_calls_after_agent_turn_hook(monkeypatch: pytest.
     ]
 
 
-def test_eval_report_prints_full_transcript_for_quality_failures(capsys: pytest.CaptureFixture[str]) -> None:
+def test_eval_report_prints_full_transcript_for_quality_failures(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
     safety_rate, quality_rate = eval_report(
         [
             {

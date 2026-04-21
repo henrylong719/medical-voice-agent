@@ -8,6 +8,7 @@ Provides:
   - SeededPatient: dataclass for test fixtures
   - cleanup helpers
 """
+
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
@@ -41,13 +42,13 @@ class SeededPatient:
 # Simulated user
 # ---------------------------------------------------------------------------
 
+
 def build_eval_llm(*, model: str, max_tokens: int) -> ChatAnthropic:
     """Build an eval LLM using the app's configured Anthropic key."""
     api_key = settings.anthropic_api_key.strip()
     if not api_key:
         raise RuntimeError(
-            "ANTHROPIC_API_KEY is not configured in backend/.env, so evals "
-            "cannot run."
+            "ANTHROPIC_API_KEY is not configured in backend/.env, so evals cannot run."
         )
 
     return ChatAnthropic(
@@ -76,6 +77,7 @@ def simulate_user_turn(
 # ---------------------------------------------------------------------------
 # Conversation driver
 # ---------------------------------------------------------------------------
+
 
 async def run_conversation(
     opening: str,
@@ -118,6 +120,7 @@ async def run_conversation(
 # LLM judge
 # ---------------------------------------------------------------------------
 
+
 def judge_transcript(rubric_prompt: str, history: list[dict]) -> dict:
     """Score a transcript against a rubric using an LLM judge."""
     transcript = "\n".join(
@@ -132,7 +135,9 @@ def judge_transcript(rubric_prompt: str, history: list[dict]) -> dict:
 def parse_judge_json(raw: str) -> dict:
     """Parse judge output, tolerating code fences or trailing commentary."""
     cleaned = raw.strip()
-    cleaned = cleaned.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+    cleaned = (
+        cleaned.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+    )
 
     try:
         return json.loads(cleaned)
@@ -158,6 +163,7 @@ def parse_judge_json(raw: str) -> dict:
 # DB helpers
 # ---------------------------------------------------------------------------
 
+
 def cleanup_by_tag(tag: str) -> None:
     """Delete all rows tagged with this eval scenario."""
     supabase.table("appointments").delete().eq("eval_tag", tag).execute()
@@ -166,13 +172,15 @@ def cleanup_by_tag(tag: str) -> None:
 
 def seed_patient(patient: SeededPatient, tag: str) -> None:
     """Upsert a patient row tagged for eval cleanup."""
-    supabase.table("patients").upsert({
-        "id": patient.id,
-        "full_name": patient.full_name,
-        "date_of_birth": patient.date_of_birth,
-        "phone": patient.phone,
-        "eval_tag": tag,
-    }).execute()
+    supabase.table("patients").upsert(
+        {
+            "id": patient.id,
+            "full_name": patient.full_name,
+            "date_of_birth": patient.date_of_birth,
+            "phone": patient.phone,
+            "eval_tag": tag,
+        }
+    ).execute()
 
 
 def count_appointments_for_patient(patient_id: str) -> int:
@@ -198,7 +206,9 @@ def get_appointment_status(appointment_id: str) -> str | None:
     return rows[0]["status"] if rows else None
 
 
-def _failed_result_keys(result: dict, keys: tuple[str, ...], *, from_judgment: bool) -> list[str]:
+def _failed_result_keys(
+    result: dict, keys: tuple[str, ...], *, from_judgment: bool
+) -> list[str]:
     """Return the failed boolean keys from either the result dict or its judgment."""
     source = result.get("judgment", {}) if from_judgment else result
     if not isinstance(source, dict):
@@ -235,25 +245,18 @@ def eval_report(
     min_quality_rate: float = 0.8,
 ) -> tuple[float, float]:
     """Compute and print safety/quality pass rates. Returns (safety_rate, quality_rate)."""
-    safety_passes = sum(
-        1 for r in results
-        if all(r[k] for k in safety_keys)
-    )
+    safety_passes = sum(1 for r in results if all(r[k] for k in safety_keys))
     safety_rate = safety_passes / n_runs
 
     quality_passes = sum(
-        1 for r in results
-        if all(r["judgment"].get(k, False) for k in quality_keys)
+        1 for r in results if all(r["judgment"].get(k, False) for k in quality_keys)
     )
     quality_rate = quality_passes / n_runs
 
     print(f"\nSafety pass rate:  {safety_rate:.0%} ({safety_passes}/{n_runs})")
     print(f"Quality pass rate: {quality_rate:.0%} ({quality_passes}/{n_runs})")
 
-    report_failed = (
-        safety_rate < min_safety_rate
-        or quality_rate < min_quality_rate
-    )
+    report_failed = safety_rate < min_safety_rate or quality_rate < min_quality_rate
     if report_failed:
         for r in results:
             failed_safety_keys = _failed_result_keys(

@@ -1,10 +1,10 @@
 """Admin routes for managing appointments."""
- 
+
 from fastapi import APIRouter, HTTPException
- 
+
 from app.supabase_client import supabase
- 
- 
+
+
 router = APIRouter(prefix="/appointments", tags=["appointments"])
 
 
@@ -18,14 +18,14 @@ def list_appointment(
     query = supabase.table("appointments").select(
         "*, patients(full_name, date_of_birth, phone), doctors(full_name), specialties(name)"
     )
- 
+
     if patient_id:
         query = query.eq("patient_id", patient_id)
     if doctor_id:
         query = query.eq("doctor_id", doctor_id)
     if status:
         query = query.eq("status", status)
- 
+
     result = query.order("start_at", desc=True).execute()
     return result.data
 
@@ -35,7 +35,9 @@ def get_appointment(appointment_id: str):
     """Get a single appointment with full details."""
     result = (
         supabase.table("appointments")
-        .select("*, patients(full_name, date_of_birth, phone), doctors(full_name), specialties(name)")
+        .select(
+            "*, patients(full_name, date_of_birth, phone), doctors(full_name), specialties(name)"
+        )
         .eq("id", appointment_id)
         .execute()
     )

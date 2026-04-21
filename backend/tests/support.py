@@ -72,12 +72,10 @@ class FakeSupabase:
         rpcs: dict[str, list[FakeQuery]] | None = None,
     ) -> None:
         self._tables: dict[str, deque[FakeQuery]] = {
-            name: deque(queries)
-            for name, queries in (tables or {}).items()
+            name: deque(queries) for name, queries in (tables or {}).items()
         }
         self._rpcs: dict[str, deque[FakeQuery]] = {
-            name: deque(queries)
-            for name, queries in (rpcs or {}).items()
+            name: deque(queries) for name, queries in (rpcs or {}).items()
         }
         self.table_calls: list[str] = []
         self.rpc_calls: list[tuple[str, dict[str, Any]]] = []

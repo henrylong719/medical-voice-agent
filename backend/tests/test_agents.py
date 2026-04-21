@@ -102,7 +102,9 @@ def test_intake_node_replaces_registration_handoff_with_concise_confirmation(
             ),
             tool_call_id="call-1",
         ),
-        AIMessage(content="Perfect! You're all registered. A staff member will be with you shortly."),
+        AIMessage(
+            content="Perfect! You're all registered. A staff member will be with you shortly."
+        ),
     ]
     fake_agent = FakeAsyncAgent({"messages": new_messages})
     monkeypatch.setattr(agents, "_get_intake_agent", lambda: fake_agent)
@@ -156,7 +158,9 @@ def test_intake_node_reuses_existing_record_after_registration_attempt(
             ),
             tool_call_id="call-1",
         ),
-        AIMessage(content="You're already in our system. A staff member will be with you shortly."),
+        AIMessage(
+            content="You're already in our system. A staff member will be with you shortly."
+        ),
     ]
     fake_agent = FakeAsyncAgent({"messages": new_messages})
     monkeypatch.setattr(agents, "_get_intake_agent", lambda: fake_agent)
@@ -165,7 +169,10 @@ def test_intake_node_reuses_existing_record_after_registration_attempt(
 
     assert result["patient_id"] == "patient-1"
     assert result["patient_name"] == "Sarah Connor"
-    assert result["messages"][-1].content == "You're already in our system. You're all set."
+    assert (
+        result["messages"][-1].content
+        == "You're already in our system. You're all set."
+    )
     assert all(
         "staff member" not in getattr(msg, "content", "")
         for msg in result["messages"]
@@ -196,7 +203,9 @@ def test_intake_node_waits_for_patient_confirmation_before_setting_identity(
             ),
             tool_call_id="call-1",
         ),
-        AIMessage(content="I found Sarah Connor born on 1985-10-26 on file — is that you?"),
+        AIMessage(
+            content="I found Sarah Connor born on 1985-10-26 on file — is that you?"
+        ),
     ]
     fake_agent = FakeAsyncAgent({"messages": new_messages})
     monkeypatch.setattr(agents, "_get_intake_agent", lambda: fake_agent)
@@ -217,7 +226,10 @@ def test_intake_node_waits_for_patient_confirmation_before_setting_identity(
             },
         }
     )
-    assert result["messages"][-1].content == "I found Sarah Connor, born October 26, 1985. Is that you?"
+    assert (
+        result["messages"][-1].content
+        == "I found Sarah Connor, born October 26, 1985. Is that you?"
+    )
     assert result["patient_id"] is None
     assert result["patient_name"] is None
 
@@ -250,7 +262,9 @@ def test_intake_node_promotes_lookup_after_patient_confirms(
             ),
             tool_call_id="call-1",
         ),
-        AIMessage(content="I found Sarah Connor born on 1985-10-26 on file — is that you?"),
+        AIMessage(
+            content="I found Sarah Connor born on 1985-10-26 on file — is that you?"
+        ),
         HumanMessage(content="yes that's me"),
     ]
     returned_messages = state["messages"] + [
@@ -294,7 +308,9 @@ def test_intake_node_promotes_lookup_after_llm_confirmed_identity_reply(
             ),
             tool_call_id="call-1",
         ),
-        AIMessage(content="I found Sarah Connor born on 1985-10-26 on file — is that you?"),
+        AIMessage(
+            content="I found Sarah Connor born on 1985-10-26 on file — is that you?"
+        ),
         HumanMessage(content="It is me"),
     ]
     returned_messages = state["messages"] + [
@@ -344,11 +360,15 @@ def test_intake_node_replaces_verification_handoff_with_concise_confirmation(
             ),
             tool_call_id="call-1",
         ),
-        AIMessage(content="I found Alice Johnson born on 1992-05-14 on file — is that you?"),
+        AIMessage(
+            content="I found Alice Johnson born on 1992-05-14 on file — is that you?"
+        ),
         HumanMessage(content="Yes, that's me"),
     ]
     returned_messages = state["messages"] + [
-        AIMessage(content="Perfect, you're verified. A staff member will be with you shortly to help."),
+        AIMessage(
+            content="Perfect, you're verified. A staff member will be with you shortly to help."
+        ),
     ]
     fake_agent = FakeAsyncAgent({"messages": returned_messages})
     monkeypatch.setattr(agents, "_get_intake_agent", lambda: fake_agent)
@@ -383,7 +403,9 @@ def test_intake_node_suppresses_redundant_verification_message_when_flow_continu
             ),
             tool_call_id="call-1",
         ),
-        AIMessage(content="I found Alice Johnson born on 1992-05-14 on file — is that you?"),
+        AIMessage(
+            content="I found Alice Johnson born on 1992-05-14 on file — is that you?"
+        ),
         HumanMessage(content="Yes, that's me"),
     ]
     returned_messages = state["messages"] + [
@@ -407,7 +429,7 @@ def test_classify_identity_reply_with_llm_returns_affirmative(
             self.kwargs = kwargs
 
         async def ainvoke(self, messages: list[object]):
-            return type("Response", (), {"content": [{"text": " affirmative "}]} )()
+            return type("Response", (), {"content": [{"text": " affirmative "}]})()
 
     monkeypatch.setattr(agents, "ChatAnthropic", FakeLLM)
 
@@ -472,7 +494,9 @@ def test_intake_node_keeps_identity_unset_for_multiple_demographic_matches(
             ),
             tool_call_id="call-1",
         ),
-        AIMessage(content="I found more than one record with that name and date of birth. What phone number do you have on file?"),
+        AIMessage(
+            content="I found more than one record with that name and date of birth. What phone number do you have on file?"
+        ),
     ]
     fake_agent = FakeAsyncAgent({"messages": new_messages})
     monkeypatch.setattr(agents, "_get_intake_agent", lambda: fake_agent)
@@ -505,7 +529,9 @@ def test_intake_node_keeps_identity_unset_for_no_match_returning_lookup(
             ),
             tool_call_id="call-1",
         ),
-        AIMessage(content="I couldn’t find a record with that name and date of birth. Do you know your MRN, passport number, driver's license number, or clinic patient number?"),
+        AIMessage(
+            content="I couldn’t find a record with that name and date of birth. Do you know your MRN, passport number, driver's license number, or clinic patient number?"
+        ),
     ]
     fake_agent = FakeAsyncAgent({"messages": new_messages})
     monkeypatch.setattr(agents, "_get_intake_agent", lambda: fake_agent)
@@ -599,13 +625,11 @@ def test_intake_prompt_requires_phone_before_registration() -> None:
     assert "find_patients_by_demographics" in agents._INTAKE_PROMPT
     assert (
         "If the patient wants to reschedule or cancel an appointment, treat them as a "
-        "returning patient immediately."
-        in agents._INTAKE_PROMPT
+        "returning patient immediately." in agents._INTAKE_PROMPT
     )
     assert (
         "Do NOT tell the patient they are registered unless register_patient has "
-        "succeeded in this turn."
-        in agents._INTAKE_PROMPT
+        "succeeded in this turn." in agents._INTAKE_PROMPT
     )
     assert (
         "Do NOT ask whether the patient is new or returning when they want to cancel or reschedule"
@@ -626,8 +650,7 @@ def test_intake_prompt_requires_phone_before_registration() -> None:
     )
     assert (
         "ask for the phone number and call find_patients_by_demographics "
-        "again with it."
-        in agents._INTAKE_PROMPT
+        "again with it." in agents._INTAKE_PROMPT
     )
     assert (
         "ask whether they know an MRN, passport number, driver's license number"
@@ -650,30 +673,27 @@ def test_intake_prompt_requires_phone_before_registration() -> None:
         in agents._INTAKE_PROMPT
     )
     assert "Do NOT pretend the details matched." in agents._INTAKE_PROMPT
-    assert (
-        "offer to register them as a new patient"
-        in agents._INTAKE_PROMPT
-    )
+    assert "offer to register them as a new patient" in agents._INTAKE_PROMPT
     assert (
         "Do NOT call register_patient until you have all three."
         in agents._INTAKE_PROMPT
     )
     assert (
         "Always collect full name, date of birth, and phone number "
-        "during new registration."
-        in agents._INTAKE_PROMPT
+        "during new registration." in agents._INTAKE_PROMPT
     )
     assert (
         "Accept any non-empty phone number string exactly as the patient "
-        "provides it."
-        in agents._INTAKE_PROMPT
+        "provides it." in agents._INTAKE_PROMPT
     )
     assert (
         "Only call register_patient AFTER the patient confirms the phone "
-        "number is right."
+        "number is right." in agents._INTAKE_PROMPT
+    )
+    assert (
+        "Read the phone number back slowly and confirm it before saving."
         in agents._INTAKE_PROMPT
     )
-    assert "Read the phone number back slowly and confirm it before saving." in agents._INTAKE_PROMPT
     assert "Do NOT guess which patient record is correct." in agents._INTAKE_PROMPT
     assert (
         "Start returning-patient lookup with full name and date of birth before asking for stronger identifiers."
@@ -713,7 +733,9 @@ def test_triage_node_extracts_specialty_and_symptoms(monkeypatch: MonkeyPatch) -
     assert result["symptoms"] == ["chest pain", "dizziness"]
 
 
-def test_scheduling_node_extracts_booked_appointment_id(monkeypatch: MonkeyPatch) -> None:
+def test_scheduling_node_extracts_booked_appointment_id(
+    monkeypatch: MonkeyPatch,
+) -> None:
     state = _base_state()
     new_messages = state["messages"] + [
         AIMessage(content="Booking that now."),
@@ -782,7 +804,9 @@ def test_triage_node_extracts_specialty_id_from_list_specialties_confirmation(
     )
 
 
-def test_scheduling_node_ignores_stale_booking_tool_messages(monkeypatch: MonkeyPatch) -> None:
+def test_scheduling_node_ignores_stale_booking_tool_messages(
+    monkeypatch: MonkeyPatch,
+) -> None:
     state = _base_state()
     state["intent"] = "reschedule"
     state["messages"] = [
@@ -902,7 +926,19 @@ def test_scheduling_node_marks_completed_reschedule(monkeypatch: MonkeyPatch) ->
 
 
 def test_scheduling_prompt_says_unavailable_bucket_before_alternatives() -> None:
-    assert "If the requested morning/afternoon bucket has no matches, say that before offering alternatives." in agents._SCHEDULING_PROMPT
-    assert "Do NOT list times from a different bucket until the patient asks for them or agrees to switch." in agents._SCHEDULING_PROMPT
-    assert "Always include the current patient's ID in find_appointment, reschedule_appointment, and cancel_appointment." in agents._SCHEDULING_PROMPT
-    assert "If book_appointment says the slot is no longer available or no longer bookable" in agents._SCHEDULING_PROMPT
+    assert (
+        "If the requested morning/afternoon bucket has no matches, say that before offering alternatives."
+        in agents._SCHEDULING_PROMPT
+    )
+    assert (
+        "Do NOT list times from a different bucket until the patient asks for them or agrees to switch."
+        in agents._SCHEDULING_PROMPT
+    )
+    assert (
+        "Always include the current patient's ID in find_appointment, reschedule_appointment, and cancel_appointment."
+        in agents._SCHEDULING_PROMPT
+    )
+    assert (
+        "If book_appointment says the slot is no longer available or no longer bookable"
+        in agents._SCHEDULING_PROMPT
+    )

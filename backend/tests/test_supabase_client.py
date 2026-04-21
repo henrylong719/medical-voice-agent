@@ -14,10 +14,8 @@ def test_create_supabase_client_avoids_postgrest_deprecation_warnings() -> None:
     messages = [str(warning.message) for warning in caught]
 
     assert not any(
-        "The 'timeout' parameter is deprecated." in message
-        for message in messages
+        "The 'timeout' parameter is deprecated." in message for message in messages
     )
     assert not any(
-        "The 'verify' parameter is deprecated." in message
-        for message in messages
+        "The 'verify' parameter is deprecated." in message for message in messages
     )

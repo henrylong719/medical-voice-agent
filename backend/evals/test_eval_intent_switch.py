@@ -14,6 +14,7 @@ Quality:
   - Agent stopped asking symptom questions after the switch
   - Agent asked about which appointment to reschedule
 """
+
 from __future__ import annotations
 
 import os
@@ -114,8 +115,11 @@ def seeded_data():
         .execute()
     )
     cardio = next(
-        (d for d in (doctors.data or [])
-         if d.get("specialties", {}).get("name", "").lower() == "cardiology"),
+        (
+            d
+            for d in (doctors.data or [])
+            if d.get("specialties", {}).get("name", "").lower() == "cardiology"
+        ),
         None,
     )
 
@@ -127,20 +131,23 @@ def seeded_data():
         specialty_id = "spec-cardio"
 
     from datetime import datetime, timedelta, timezone
+
     future = datetime.now(timezone.utc) + timedelta(days=7)
     start = future.replace(hour=14, minute=0, second=0, microsecond=0)
     end = start + timedelta(minutes=30)
 
-    supabase.table("appointments").upsert({
-        "id": APPT_ID,
-        "patient_id": PATIENT.id,
-        "doctor_id": doctor_id,
-        "specialty_id": specialty_id,
-        "start_at": start.isoformat(),
-        "end_at": end.isoformat(),
-        "status": "scheduled",
-        "eval_tag": SCENARIO_TAG,
-    }).execute()
+    supabase.table("appointments").upsert(
+        {
+            "id": APPT_ID,
+            "patient_id": PATIENT.id,
+            "doctor_id": doctor_id,
+            "specialty_id": specialty_id,
+            "start_at": start.isoformat(),
+            "end_at": end.isoformat(),
+            "status": "scheduled",
+            "eval_tag": SCENARIO_TAG,
+        }
+    ).execute()
 
     yield
 
@@ -156,14 +163,14 @@ async def test_intent_switch_booking_to_reschedule():
 
     for run_idx in range(N_RUNS):
         # Reset appointment status between runs
-        supabase.table("appointments").update(
-            {"status": "scheduled"}
-        ).eq("id", APPT_ID).execute()
+        supabase.table("appointments").update({"status": "scheduled"}).eq(
+            "id", APPT_ID
+        ).execute()
 
         # Clean up any accidentally booked appointments from prior runs
-        supabase.table("appointments").delete().eq(
-            "patient_id", PATIENT.id
-        ).neq("id", APPT_ID).execute()
+        supabase.table("appointments").delete().eq("patient_id", PATIENT.id).neq(
+            "id", APPT_ID
+        ).execute()
 
         history = await run_conversation(
             "Hi, I need to book an appointment.",
@@ -177,18 +184,18 @@ async def test_intent_switch_booking_to_reschedule():
             .eq("patient_id", PATIENT.id)
             .execute()
         )
-        no_new_booking = all(
-            row["id"] == APPT_ID for row in (all_appts.data or [])
-        )
+        no_new_booking = all(row["id"] == APPT_ID for row in (all_appts.data or []))
 
         judgment = judge_transcript(JUDGE_PROMPT, history)
 
-        results.append({
-            "run": run_idx,
-            "no_new_booking": no_new_booking,
-            "judgment": judgment,
-            "transcript": history,
-        })
+        results.append(
+            {
+                "run": run_idx,
+                "no_new_booking": no_new_booking,
+                "judgment": judgment,
+                "transcript": history,
+            }
+        )
 
     safety_rate, quality_rate = eval_report(
         results,

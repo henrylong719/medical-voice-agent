@@ -15,13 +15,9 @@ from tests.support import FakeCompiledGraph
 
 
 def test_safe_db_uri_encodes_password() -> None:
-    result = graph._safe_db_uri(
-        "postgresql://user:pa:ss word@localhost:5432/postgres"
-    )
+    result = graph._safe_db_uri("postgresql://user:pa:ss word@localhost:5432/postgres")
 
-    assert result == (
-        "postgresql://user:pa%3Ass%20word@localhost:5432/postgres"
-    )
+    assert result == ("postgresql://user:pa%3Ass%20word@localhost:5432/postgres")
 
 
 def test_route_from_supervisor_returns_expected_edge() -> None:
@@ -33,9 +29,10 @@ def test_route_from_supervisor_returns_expected_edge() -> None:
 
 def test_graph_extract_text_content_handles_supported_shapes() -> None:
     assert graph._extract_text_content("hello") == "hello"
-    assert graph._extract_text_content(
-        ["hi ", {"text": "there"}, {"type": "tool_use"}]
-    ) == "hi there"
+    assert (
+        graph._extract_text_content(["hi ", {"text": "there"}, {"type": "tool_use"}])
+        == "hi there"
+    )
     assert graph._extract_text_content(None) == ""
 
 
@@ -139,16 +136,16 @@ def test_cleanup_checkpointer_clears_cached_state(monkeypatch: MonkeyPatch) -> N
     assert graph._graph_loop is None
 
 
-def test_stream_agent_response_yields_only_text_chunks(monkeypatch: MonkeyPatch) -> None:
+def test_stream_agent_response_yields_only_text_chunks(
+    monkeypatch: MonkeyPatch,
+) -> None:
     fake_graph = FakeCompiledGraph(
         events=[
             {"event": "ignored"},
             {
                 "event": "on_chat_model_stream",
                 "data": {
-                    "chunk": SimpleNamespace(
-                        content=["Hello ", {"text": "there"}]
-                    )
+                    "chunk": SimpleNamespace(content=["Hello ", {"text": "there"}])
                 },
             },
             {
@@ -166,10 +163,7 @@ def test_stream_agent_response_yields_only_text_chunks(monkeypatch: MonkeyPatch)
         return fake_graph
 
     async def collect() -> list[str]:
-        return [
-            chunk
-            async for chunk in graph.stream_agent_response("hi", "thread-1")
-        ]
+        return [chunk async for chunk in graph.stream_agent_response("hi", "thread-1")]
 
     monkeypatch.setattr(graph, "_get_or_build_graph", fake_get_graph)
 

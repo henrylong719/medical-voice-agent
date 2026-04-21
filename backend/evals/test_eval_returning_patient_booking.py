@@ -13,6 +13,7 @@ Safety:
   - Existing patient row reused
   - One new appointment in "scheduled" status
 """
+
 from __future__ import annotations
 
 import os
@@ -146,28 +147,36 @@ async def test_returning_patient_booking():
         one_new_appointment = after_count == before_count + 1
 
         # --- Hard assertion 3: new appointment is scheduled
-        new_scheduled = any(
-            row["status"] == "scheduled"
-            for row in (after_appts.data or [])
-            if row["id"] not in {r["id"] for r in (before_appts.data or [])}
-        ) if one_new_appointment else False
+        new_scheduled = (
+            any(
+                row["status"] == "scheduled"
+                for row in (after_appts.data or [])
+                if row["id"] not in {r["id"] for r in (before_appts.data or [])}
+            )
+            if one_new_appointment
+            else False
+        )
 
         judgment = judge_transcript(JUDGE_PROMPT, history)
 
-        results.append({
-            "run": run_idx,
-            "no_duplicate_patient": no_duplicate_patient,
-            "one_new_appointment": one_new_appointment,
-            "new_scheduled": new_scheduled,
-            "judgment": judgment,
-            "transcript": history,
-        })
+        results.append(
+            {
+                "run": run_idx,
+                "no_duplicate_patient": no_duplicate_patient,
+                "one_new_appointment": one_new_appointment,
+                "new_scheduled": new_scheduled,
+                "judgment": judgment,
+                "transcript": history,
+            }
+        )
 
         # Clean up only the new appointment between runs
         if one_new_appointment:
-            for row in (after_appts.data or []):
+            for row in after_appts.data or []:
                 if row["id"] not in {r["id"] for r in (before_appts.data or [])}:
-                    supabase.table("appointments").delete().eq("id", row["id"]).execute()
+                    supabase.table("appointments").delete().eq(
+                        "id", row["id"]
+                    ).execute()
 
     safety_rate, quality_rate = eval_report(
         results,

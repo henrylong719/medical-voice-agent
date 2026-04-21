@@ -55,8 +55,10 @@ logger = logging.getLogger(__name__)
 
 IdentifierType = Literal["mrn", "passport", "drivers_license", "external_patient_id"]
 
+
 class FindPatientByIdentifierInput(BaseModel):
     """Input for patient lookup by a strong identifier."""
+
     identifier_type: IdentifierType = Field(
         description=(
             "Type of identifier provided by the patient: mrn, passport, "
@@ -70,6 +72,7 @@ class FindPatientByIdentifierInput(BaseModel):
 
 class FindPatientsByDemographicsInput(BaseModel):
     """Input for patient lookup by demographics."""
+
     full_name: str = Field(description="Patient's full name")
     date_of_birth: str = Field(
         description=(
@@ -89,6 +92,7 @@ class FindPatientsByDemographicsInput(BaseModel):
 
 class RegisterPatientInput(BaseModel):
     """Input for registering a new patient."""
+
     full_name: str = Field(description="Patient's full name")
     date_of_birth: str = Field(
         description=(
@@ -113,6 +117,7 @@ class RegisterPatientInput(BaseModel):
 
 class TriageSymptomsInput(BaseModel):
     """Input for symptom-based triage."""
+
     symptoms: list[str] = Field(
         description=(
             "List of individual symptoms the patient described. "
@@ -133,6 +138,7 @@ class TriageSymptomsInput(BaseModel):
 
 class FindSlotsInput(BaseModel):
     """Input for finding available appointment slots."""
+
     specialty_id: str = Field(description="UUID of the specialty to search")
     preferred_day: str | None = Field(
         default=None,
@@ -152,11 +158,16 @@ class FindSlotsInput(BaseModel):
 
 class BookAppointmentInput(BaseModel):
     """Input for booking an appointment."""
+
     patient_id: str = Field(description="UUID of the patient")
     doctor_id: str = Field(description="UUID of the doctor (from find_slots results)")
     specialty_id: str = Field(description="UUID of the specialty")
-    start_at: str = Field(description="Slot start time in ISO format (from find_slots results)")
-    end_at: str = Field(description="Slot end time in ISO format (from find_slots results)")
+    start_at: str = Field(
+        description="Slot start time in ISO format (from find_slots results)"
+    )
+    end_at: str = Field(
+        description="Slot end time in ISO format (from find_slots results)"
+    )
     reason: str | None = Field(
         default=None,
         description="Brief reason for the visit based on the patient's symptoms",
@@ -165,6 +176,7 @@ class BookAppointmentInput(BaseModel):
 
 class FindAppointmentInput(BaseModel):
     """Input for looking up existing appointments."""
+
     patient_id: str = Field(description="UUID of the patient")
     doctor_name: str | None = Field(
         default=None,
@@ -178,6 +190,7 @@ class FindAppointmentInput(BaseModel):
 
 class RescheduleInput(BaseModel):
     """Input for rescheduling an appointment."""
+
     appointment_id: str = Field(description="UUID of the appointment to reschedule")
     patient_id: str = Field(description="UUID of the patient who owns the appointment")
     preferred_day: str | None = Field(
@@ -208,6 +221,7 @@ class RescheduleInput(BaseModel):
 
 class CancelAppointmentInput(BaseModel):
     """Input for cancelling an appointment."""
+
     patient_id: str = Field(description="UUID of the patient who owns the appointment")
     appointment_id: str = Field(description="UUID of the appointment to cancel")
 
@@ -279,7 +293,9 @@ def _normalize_date_of_birth(date_of_birth: str) -> str | None:
     if not normalized:
         return None
 
-    cleaned = re.sub(r"\b(\d{1,2})(st|nd|rd|th)\b", r"\1", normalized, flags=re.IGNORECASE)
+    cleaned = re.sub(
+        r"\b(\d{1,2})(st|nd|rd|th)\b", r"\1", normalized, flags=re.IGNORECASE
+    )
     cleaned = cleaned.replace(",", " ")
     cleaned = re.sub(r"\s+", " ", cleaned).strip()
 
@@ -354,7 +370,9 @@ def _fetch_patient(patient_id: str) -> PatientLookupRow | None:
 
 
 @tool(args_schema=FindPatientByIdentifierInput)
-def find_patient_by_identifier(identifier_type: IdentifierType, identifier_value: str) -> str:
+def find_patient_by_identifier(
+    identifier_type: IdentifierType, identifier_value: str
+) -> str:
     """Look up a returning patient by a strong identifier.
 
     Use this as a fallback after demographic lookup could not find a
@@ -372,7 +390,9 @@ def find_patient_by_identifier(identifier_type: IdentifierType, identifier_value
 
     result = (
         supabase.table("patient_identifiers")
-        .select("patient_id, identifier_type, identifier_value, issuing_country, is_primary")
+        .select(
+            "patient_id, identifier_type, identifier_value, issuing_country, is_primary"
+        )
         .eq("identifier_type", identifier_type)
         .eq("identifier_value", normalized_value)
         .execute()
@@ -618,7 +638,9 @@ def triage_symptoms(symptoms: list[str], description: str = "") -> str:
     their symptoms.
     """
     if not symptoms and not description:
-        return "No symptoms provided. Please ask the patient to describe their symptoms."
+        return (
+            "No symptoms provided. Please ask the patient to describe their symptoms."
+        )
 
     lines: list[str] = []
 
@@ -631,7 +653,9 @@ def triage_symptoms(symptoms: list[str], description: str = "") -> str:
     for symptom in symptoms:
         result = (
             supabase.table("symptom_specialty_map")
-            .select("symptom, weight, follow_up_questions, specialty_id, specialties(name)")
+            .select(
+                "symptom, weight, follow_up_questions, specialty_id, specialties(name)"
+            )
             .ilike("symptom", f"%{symptom}%")
             .execute()
         )
@@ -658,7 +682,7 @@ def triage_symptoms(symptoms: list[str], description: str = "") -> str:
             entry["total_weight"] += float(match["weight"])
             entry["matched_symptoms"].append(match["symptom"])
 
-            for q in (match.get("follow_up_questions") or []):
+            for q in match.get("follow_up_questions") or []:
                 if q not in entry["follow_up_questions"]:
                     entry["follow_up_questions"].append(q)
 
@@ -838,7 +862,9 @@ def find_appointment(
     """
     query = (
         supabase.table("appointments")
-        .select("id, start_at, end_at, status, reason, doctors(full_name), specialties(name)")
+        .select(
+            "id, start_at, end_at, status, reason, doctors(full_name), specialties(name)"
+        )
         .eq("patient_id", patient_id)
         .eq("status", "scheduled")
         .gte("start_at", now_utc().isoformat())
@@ -855,8 +881,7 @@ def find_appointment(
     if doctor_name:
         doctor_lower = doctor_name.lower()
         appointments = [
-            a for a in appointments
-            if doctor_lower in a["doctors"]["full_name"].lower()
+            a for a in appointments if doctor_lower in a["doctors"]["full_name"].lower()
         ]
         if not appointments:
             return f"No upcoming appointments found with a doctor matching '{doctor_name}'."
@@ -864,7 +889,8 @@ def find_appointment(
     if specialty_name:
         specialty_lower = specialty_name.lower()
         appointments = [
-            a for a in appointments
+            a
+            for a in appointments
             if specialty_lower in a["specialties"]["name"].lower()
         ]
         if not appointments:
@@ -1000,7 +1026,9 @@ def reschedule_appointment(
             ).execute()
         except Exception:
             logger.exception("Failed to reschedule appointment")
-            return "Failed to update the appointment. The original appointment was kept."
+            return (
+                "Failed to update the appointment. The original appointment was kept."
+            )
 
         payload = _coerce_rpc_payload(rpc_result.data)
         status = payload.get("status")
@@ -1029,8 +1057,12 @@ def reschedule_appointment(
                 "time. The original appointment was kept."
             )
         if status != "ok":
-            logger.error("Unexpected finalize_reschedule_appointment status: %r", status)
-            return "Failed to update the appointment. The original appointment was kept."
+            logger.error(
+                "Unexpected finalize_reschedule_appointment status: %r", status
+            )
+            return (
+                "Failed to update the appointment. The original appointment was kept."
+            )
 
         new_label = format_for_voice(confirmed_start_at)
         return (

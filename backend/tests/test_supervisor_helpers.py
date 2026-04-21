@@ -3,6 +3,7 @@ Tests for supervisor helper functions — intent keyword detection,
 identity correction detection, patient status classification, and
 other internal logic not covered by the main supervisor_node tests.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -16,6 +17,7 @@ from app.agent.state import AgentState
 
 
 # ── Helpers ───────────────────────────────────────────────────
+
 
 def _msg(content: str) -> HumanMessage:
     return HumanMessage(content=content)
@@ -43,40 +45,66 @@ def _state(**overrides: Any) -> AgentState:
 # _intent_keyword_from_message
 # ============================================================
 
+
 def test_intent_keyword_reschedule() -> None:
-    assert supervisor._intent_keyword_from_message(_msg("I'd like to reschedule")) == "reschedule"
+    assert (
+        supervisor._intent_keyword_from_message(_msg("I'd like to reschedule"))
+        == "reschedule"
+    )
 
 
 def test_intent_keyword_move_appointment() -> None:
-    assert supervisor._intent_keyword_from_message(_msg("move my appointment")) == "reschedule"
+    assert (
+        supervisor._intent_keyword_from_message(_msg("move my appointment"))
+        == "reschedule"
+    )
 
 
 def test_intent_keyword_different_time() -> None:
-    assert supervisor._intent_keyword_from_message(_msg("I want a different time")) == "reschedule"
+    assert (
+        supervisor._intent_keyword_from_message(_msg("I want a different time"))
+        == "reschedule"
+    )
 
 
 def test_intent_keyword_change_appointment() -> None:
-    assert supervisor._intent_keyword_from_message(_msg("change my appointment")) == "reschedule"
+    assert (
+        supervisor._intent_keyword_from_message(_msg("change my appointment"))
+        == "reschedule"
+    )
 
 
 def test_intent_keyword_cancel() -> None:
-    assert supervisor._intent_keyword_from_message(_msg("cancel my appointment")) == "cancel"
+    assert (
+        supervisor._intent_keyword_from_message(_msg("cancel my appointment"))
+        == "cancel"
+    )
 
 
 def test_intent_keyword_call_off() -> None:
-    assert supervisor._intent_keyword_from_message(_msg("call off my appointment")) == "cancel"
+    assert (
+        supervisor._intent_keyword_from_message(_msg("call off my appointment"))
+        == "cancel"
+    )
 
 
 def test_intent_keyword_book() -> None:
-    assert supervisor._intent_keyword_from_message(_msg("book an appointment")) == "book"
+    assert (
+        supervisor._intent_keyword_from_message(_msg("book an appointment")) == "book"
+    )
 
 
 def test_intent_keyword_make() -> None:
-    assert supervisor._intent_keyword_from_message(_msg("make an appointment")) == "book"
+    assert (
+        supervisor._intent_keyword_from_message(_msg("make an appointment")) == "book"
+    )
 
 
 def test_intent_keyword_schedule() -> None:
-    assert supervisor._intent_keyword_from_message(_msg("schedule an appointment")) == "book"
+    assert (
+        supervisor._intent_keyword_from_message(_msg("schedule an appointment"))
+        == "book"
+    )
 
 
 def test_intent_keyword_none_for_vague() -> None:
@@ -99,8 +127,12 @@ def test_intent_keyword_reschedule_takes_priority_over_cancel() -> None:
 # _looks_like_identity_correction
 # ============================================================
 
+
 def test_identity_correction_wrong_patient() -> None:
-    assert supervisor._looks_like_identity_correction(_msg("That's the wrong patient")) is True
+    assert (
+        supervisor._looks_like_identity_correction(_msg("That's the wrong patient"))
+        is True
+    )
 
 
 def test_identity_correction_not_me() -> None:
@@ -112,15 +144,21 @@ def test_identity_correction_my_mrn() -> None:
 
 
 def test_identity_correction_passport() -> None:
-    assert supervisor._looks_like_identity_correction(
-        _msg("My passport number is AB123456")
-    ) is True
+    assert (
+        supervisor._looks_like_identity_correction(
+            _msg("My passport number is AB123456")
+        )
+        is True
+    )
 
 
 def test_identity_correction_drivers_license() -> None:
-    assert supervisor._looks_like_identity_correction(
-        _msg("My driver's license is DL-99999")
-    ) is True
+    assert (
+        supervisor._looks_like_identity_correction(
+            _msg("My driver's license is DL-99999")
+        )
+        is True
+    )
 
 
 def test_identity_correction_wrong_record() -> None:
@@ -128,11 +166,18 @@ def test_identity_correction_wrong_record() -> None:
 
 
 def test_identity_correction_not_my_record() -> None:
-    assert supervisor._looks_like_identity_correction(_msg("That's not my record")) is True
+    assert (
+        supervisor._looks_like_identity_correction(_msg("That's not my record")) is True
+    )
 
 
 def test_identity_correction_wrong_date_of_birth() -> None:
-    assert supervisor._looks_like_identity_correction(_msg("That's the wrong date of birth")) is True
+    assert (
+        supervisor._looks_like_identity_correction(
+            _msg("That's the wrong date of birth")
+        )
+        is True
+    )
 
 
 def test_identity_correction_normal_message() -> None:
@@ -146,6 +191,7 @@ def test_identity_correction_empty() -> None:
 # ============================================================
 # _classify_patient_status
 # ============================================================
+
 
 def test_classify_status_first_visit() -> None:
     assert supervisor._classify_patient_status(_msg("This is my first visit")) == "new"
@@ -176,11 +222,17 @@ def test_classify_status_nope() -> None:
 
 
 def test_classify_status_returning() -> None:
-    assert supervisor._classify_patient_status(_msg("I'm a returning patient")) == "returning"
+    assert (
+        supervisor._classify_patient_status(_msg("I'm a returning patient"))
+        == "returning"
+    )
 
 
 def test_classify_status_been_there_before() -> None:
-    assert supervisor._classify_patient_status(_msg("I've been there before")) == "returning"
+    assert (
+        supervisor._classify_patient_status(_msg("I've been there before"))
+        == "returning"
+    )
 
 
 def test_classify_status_came_before() -> None:
@@ -234,9 +286,7 @@ def test_classify_status_with_llm_returns_none_for_unknown(
 
     monkeypatch.setattr(supervisor, "ChatAnthropic", FakeLLM)
 
-    result = asyncio.run(
-        supervisor._classify_patient_status_with_llm(_msg("maybe"))
-    )
+    result = asyncio.run(supervisor._classify_patient_status_with_llm(_msg("maybe")))
 
     assert result is None
 
@@ -245,75 +295,106 @@ def test_classify_status_with_llm_returns_none_for_unknown(
 # _looks_like_explicit_intent_switch
 # ============================================================
 
+
 def test_intent_switch_with_actually() -> None:
-    assert supervisor._looks_like_explicit_intent_switch(
-        _msg("Actually, I want to cancel"),
-        "book",
-    ) is True
+    assert (
+        supervisor._looks_like_explicit_intent_switch(
+            _msg("Actually, I want to cancel"),
+            "book",
+        )
+        is True
+    )
 
 
 def test_intent_switch_with_instead() -> None:
-    assert supervisor._looks_like_explicit_intent_switch(
-        _msg("I want to reschedule instead"),
-        "book",
-    ) is True
+    assert (
+        supervisor._looks_like_explicit_intent_switch(
+            _msg("I want to reschedule instead"),
+            "book",
+        )
+        is True
+    )
 
 
 def test_intent_switch_with_rather() -> None:
-    assert supervisor._looks_like_explicit_intent_switch(
-        _msg("I'd rather just cancel it"),
-        "book",
-    ) is True
+    assert (
+        supervisor._looks_like_explicit_intent_switch(
+            _msg("I'd rather just cancel it"),
+            "book",
+        )
+        is True
+    )
 
 
 def test_intent_switch_marker_without_new_intent_not_detected() -> None:
-    assert supervisor._looks_like_explicit_intent_switch(
-        _msg("Actually, yes that sounds good"),
-        "book",
-    ) is False
+    assert (
+        supervisor._looks_like_explicit_intent_switch(
+            _msg("Actually, yes that sounds good"),
+            "book",
+        )
+        is False
+    )
 
 
 def test_intent_switch_different_keyword() -> None:
-    assert supervisor._looks_like_explicit_intent_switch(
-        _msg("I want to cancel my appointment"),
-        "book",
-    ) is True
+    assert (
+        supervisor._looks_like_explicit_intent_switch(
+            _msg("I want to cancel my appointment"),
+            "book",
+        )
+        is True
+    )
 
 
 def test_intent_switch_same_keyword_not_detected() -> None:
     # Saying "book" when current intent is already "book" is not a switch
-    assert supervisor._looks_like_explicit_intent_switch(
-        _msg("book an appointment"),
-        "book",
-    ) is False
+    assert (
+        supervisor._looks_like_explicit_intent_switch(
+            _msg("book an appointment"),
+            "book",
+        )
+        is False
+    )
 
 
 def test_intent_switch_no_markers_no_keyword() -> None:
-    assert supervisor._looks_like_explicit_intent_switch(
-        _msg("yes that sounds good"),
-        "book",
-    ) is False
+    assert (
+        supervisor._looks_like_explicit_intent_switch(
+            _msg("yes that sounds good"),
+            "book",
+        )
+        is False
+    )
 
 
 def test_intent_switch_empty_message() -> None:
-    assert supervisor._looks_like_explicit_intent_switch(
-        _msg(""),
-        "book",
-    ) is False
+    assert (
+        supervisor._looks_like_explicit_intent_switch(
+            _msg(""),
+            "book",
+        )
+        is False
+    )
 
 
 def test_intent_switch_review_for_move_this_appointment() -> None:
-    assert supervisor._may_need_intent_switch_review(
-        _msg("I need to move this appointment"),
-        "book",
-    ) is True
+    assert (
+        supervisor._may_need_intent_switch_review(
+            _msg("I need to move this appointment"),
+            "book",
+        )
+        is True
+    )
 
 
 def test_intent_switch_review_ignores_booking_detail_clarification() -> None:
-    assert supervisor._may_need_intent_switch_review(
-        _msg("Actually, next week works better"),
-        "book",
-    ) is False
+    assert (
+        supervisor._may_need_intent_switch_review(
+            _msg("Actually, next week works better"),
+            "book",
+        )
+        is False
+    )
 
 
 def test_classify_intent_switch_with_llm_returns_normalized_label(
@@ -364,33 +445,41 @@ def test_classify_intent_switch_with_llm_returns_none_for_no_switch(
 # _is_first_message
 # ============================================================
 
+
 def test_is_first_message_single_human() -> None:
-    assert supervisor._is_first_message(
-        _state(messages=[HumanMessage(content="hi")])
-    ) is True
+    assert (
+        supervisor._is_first_message(_state(messages=[HumanMessage(content="hi")]))
+        is True
+    )
 
 
 def test_is_first_message_with_ai_response() -> None:
-    assert supervisor._is_first_message(
-        _state(
-            messages=[
-                HumanMessage(content="hi"),
-                AIMessage(content="Hello!"),
-            ]
+    assert (
+        supervisor._is_first_message(
+            _state(
+                messages=[
+                    HumanMessage(content="hi"),
+                    AIMessage(content="Hello!"),
+                ]
+            )
         )
-    ) is False
+        is False
+    )
 
 
 def test_is_first_message_multiple_human() -> None:
-    assert supervisor._is_first_message(
-        _state(
-            messages=[
-                HumanMessage(content="hi"),
-                AIMessage(content="Hello!"),
-                HumanMessage(content="I need help"),
-            ]
+    assert (
+        supervisor._is_first_message(
+            _state(
+                messages=[
+                    HumanMessage(content="hi"),
+                    AIMessage(content="Hello!"),
+                    HumanMessage(content="I need help"),
+                ]
+            )
         )
-    ) is False
+        is False
+    )
 
 
 def test_is_first_message_empty() -> None:
@@ -400,6 +489,7 @@ def test_is_first_message_empty() -> None:
 # ============================================================
 # _latest_human_message
 # ============================================================
+
 
 def test_latest_human_message_returns_last() -> None:
     state = _state(
@@ -427,6 +517,7 @@ def test_latest_human_message_returns_none_for_ai_only() -> None:
 # ============================================================
 # _flatten_message_content
 # ============================================================
+
 
 def test_flatten_content_string() -> None:
     assert supervisor._flatten_message_content("hello") == "hello"
@@ -461,6 +552,7 @@ def test_flatten_content_integer() -> None:
 # ============================================================
 # _awaiting_patient_status_answer
 # ============================================================
+
 
 def test_awaiting_status_after_visit_question() -> None:
     state = _state(
@@ -530,6 +622,7 @@ def test_identity_correction_llm_fallback_returns_true(
 # supervisor_node — scheduling completion then new intent
 # ============================================================
 
+
 def test_supervisor_waits_after_scheduling_completes() -> None:
     """When scheduling clears intent (flow complete), supervisor should
     go to 'done' and wait, not ask again."""
@@ -556,6 +649,7 @@ def test_supervisor_waits_after_scheduling_completes() -> None:
 # ============================================================
 # _latest_ai_message_before_latest_human
 # ============================================================
+
 
 def test_latest_ai_before_human_basic() -> None:
     state = _state(

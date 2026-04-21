@@ -19,16 +19,16 @@ These chunks reference specialties from 002_seed.sql using the same UUIDs.
 
 # Specialty UUIDs from 002_seed.sql — keep in sync
 SPECIALTY_IDS = {
-    "cardiology":       "a1000000-0000-0000-0000-000000000001",
-    "neurology":        "a1000000-0000-0000-0000-000000000002",
-    "orthopedics":      "a1000000-0000-0000-0000-000000000003",
-    "dermatology":      "a1000000-0000-0000-0000-000000000004",
-    "gastroenterology":  "a1000000-0000-0000-0000-000000000005",
-    "ophthalmology":    "a1000000-0000-0000-0000-000000000006",
-    "psychiatry":       "a1000000-0000-0000-0000-000000000007",
-    "pulmonology":      "a1000000-0000-0000-0000-000000000008",
-    "endocrinology":    "a1000000-0000-0000-0000-000000000009",
-    "ent":              "a1000000-0000-0000-0000-000000000010",
+    "cardiology": "a1000000-0000-0000-0000-000000000001",
+    "neurology": "a1000000-0000-0000-0000-000000000002",
+    "orthopedics": "a1000000-0000-0000-0000-000000000003",
+    "dermatology": "a1000000-0000-0000-0000-000000000004",
+    "gastroenterology": "a1000000-0000-0000-0000-000000000005",
+    "ophthalmology": "a1000000-0000-0000-0000-000000000006",
+    "psychiatry": "a1000000-0000-0000-0000-000000000007",
+    "pulmonology": "a1000000-0000-0000-0000-000000000008",
+    "endocrinology": "a1000000-0000-0000-0000-000000000009",
+    "ent": "a1000000-0000-0000-0000-000000000010",
 }
 
 
@@ -111,7 +111,6 @@ KNOWLEDGE_CHUNKS: list[dict] = [
             "source": "clinical_triage_guidelines",
         },
     },
-
     # ────────────────────────────────────────────
     # NEUROLOGY
     # ────────────────────────────────────────────
@@ -197,11 +196,14 @@ KNOWLEDGE_CHUNKS: list[dict] = [
             "specialty_id": SPECIALTY_IDS["neurology"],
             "specialty_name": "Neurology",
             "category": "symptom_cluster",
-            "severity_keywords": ["aura", "visual disturbance", "eye pain with headache"],
+            "severity_keywords": [
+                "aura",
+                "visual disturbance",
+                "eye pain with headache",
+            ],
             "source": "clinical_triage_guidelines",
         },
     },
-
     # ────────────────────────────────────────────
     # ORTHOPEDICS
     # ────────────────────────────────────────────
@@ -266,7 +268,6 @@ KNOWLEDGE_CHUNKS: list[dict] = [
             "source": "clinical_triage_guidelines",
         },
     },
-
     # ────────────────────────────────────────────
     # DERMATOLOGY
     # ────────────────────────────────────────────
@@ -312,7 +313,6 @@ KNOWLEDGE_CHUNKS: list[dict] = [
             "source": "clinical_triage_guidelines",
         },
     },
-
     # ────────────────────────────────────────────
     # GASTROENTEROLOGY
     # ────────────────────────────────────────────
@@ -333,7 +333,11 @@ KNOWLEDGE_CHUNKS: list[dict] = [
             "specialty_id": SPECIALTY_IDS["gastroenterology"],
             "specialty_name": "Gastroenterology",
             "category": "symptom_cluster",
-            "severity_keywords": ["vomiting blood", "severe abdominal pain", "weight loss"],
+            "severity_keywords": [
+                "vomiting blood",
+                "severe abdominal pain",
+                "weight loss",
+            ],
             "source": "clinical_triage_guidelines",
         },
     },
@@ -359,7 +363,6 @@ KNOWLEDGE_CHUNKS: list[dict] = [
             "source": "clinical_triage_guidelines",
         },
     },
-
     # ────────────────────────────────────────────
     # OPHTHALMOLOGY
     # ────────────────────────────────────────────
@@ -400,11 +403,14 @@ KNOWLEDGE_CHUNKS: list[dict] = [
             "specialty_id": SPECIALTY_IDS["ophthalmology"],
             "specialty_name": "Ophthalmology",
             "category": "symptom_cluster",
-            "severity_keywords": ["retinal detachment", "sudden floaters", "vision curtain"],
+            "severity_keywords": [
+                "retinal detachment",
+                "sudden floaters",
+                "vision curtain",
+            ],
             "source": "clinical_triage_guidelines",
         },
     },
-
     # ────────────────────────────────────────────
     # PSYCHIATRY
     # ────────────────────────────────────────────
@@ -451,7 +457,6 @@ KNOWLEDGE_CHUNKS: list[dict] = [
             "source": "clinical_triage_guidelines",
         },
     },
-
     # ────────────────────────────────────────────
     # PULMONOLOGY
     # ────────────────────────────────────────────
@@ -477,7 +482,6 @@ KNOWLEDGE_CHUNKS: list[dict] = [
             "source": "clinical_triage_guidelines",
         },
     },
-
     # ────────────────────────────────────────────
     # ENDOCRINOLOGY
     # ────────────────────────────────────────────
@@ -499,7 +503,11 @@ KNOWLEDGE_CHUNKS: list[dict] = [
             "specialty_id": SPECIALTY_IDS["endocrinology"],
             "specialty_name": "Endocrinology",
             "category": "symptom_cluster",
-            "severity_keywords": ["uncontrolled diabetes", "thyroid crisis", "severe fatigue"],
+            "severity_keywords": [
+                "uncontrolled diabetes",
+                "thyroid crisis",
+                "severe fatigue",
+            ],
             "source": "clinical_triage_guidelines",
         },
     },
@@ -522,11 +530,14 @@ KNOWLEDGE_CHUNKS: list[dict] = [
             "specialty_id": SPECIALTY_IDS["endocrinology"],
             "specialty_name": "Endocrinology",
             "category": "symptom_cluster",
-            "severity_keywords": ["frequent urination", "excessive thirst", "undiagnosed diabetes"],
+            "severity_keywords": [
+                "frequent urination",
+                "excessive thirst",
+                "undiagnosed diabetes",
+            ],
             "source": "clinical_triage_guidelines",
         },
     },
-
     # ────────────────────────────────────────────
     # ENT (Ear, Nose & Throat)
     # ────────────────────────────────────────────
@@ -566,11 +577,14 @@ KNOWLEDGE_CHUNKS: list[dict] = [
             "specialty_id": SPECIALTY_IDS["ent"],
             "specialty_name": "ENT",
             "category": "symptom_cluster",
-            "severity_keywords": ["can't swallow", "voice changes", "chronic sinusitis"],
+            "severity_keywords": [
+                "can't swallow",
+                "voice changes",
+                "chronic sinusitis",
+            ],
             "source": "clinical_triage_guidelines",
         },
     },
-
     # ────────────────────────────────────────────
     # CROSS-SPECIALTY: SEVERITY GUIDES
     # ────────────────────────────────────────────
@@ -597,8 +611,12 @@ KNOWLEDGE_CHUNKS: list[dict] = [
             "specialty_name": None,
             "category": "severity_guide",
             "severity_keywords": [
-                "heart attack", "stroke", "aneurysm",
-                "meningitis", "anaphylaxis", "emergency",
+                "heart attack",
+                "stroke",
+                "aneurysm",
+                "meningitis",
+                "anaphylaxis",
+                "emergency",
             ],
             "source": "emergency_triage_protocol",
         },
