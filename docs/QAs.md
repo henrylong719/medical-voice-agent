@@ -186,3 +186,10 @@ Q: Look at the intent field. The Supervisor sets it by analyzing what the patien
 Yes, exactly! "I'd like to chat with you" doesn't signal any of the three intents — they haven't said anything about booking, rescheduling, or cancelling. So intent stays None and the Supervisor would need to ask: "Sure! Are you looking to book a new appointment, reschedule an existing one, or something else?"
 Other ambiguous examples: "I'm not feeling well" (sounds like it could be a booking, but maybe they just want to talk), or "I called last week about my appointment" (reschedule? cancel? just checking details?).
 The None state is essentially the Supervisor saying "I don't have enough information to route yet — I need to ask a follow-up question."
+
+
+## Phase 5
+
+Q: Why can't we just make the prompts stricter instead of building a separate guardrails layer? What's the fundamental limitation of relying on prompts alone for safety?
+
+As the conversation grows longer, the system prompt gets pushed further from the model's attention window, and compliance degrades. There's also a more fundamental issue: the LLM is a single point of failure. No matter how good your prompt is, it's still asking the model to behave — not forcing it. A separate guardrails layer acts as an independent check that doesn't share the same failure mode.

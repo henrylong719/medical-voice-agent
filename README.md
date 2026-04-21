@@ -25,14 +25,14 @@ The repository is currently in a Phase 4-style state:
 - Asks booking patients whether they are new or returning.
 - Looks up returning patients by full name + date of birth first.
 - Uses phone as an optional disambiguator if demographic lookup is ambiguous.
-- Falls back to stronger identifiers like MRN, passport number, driver's license number, or clinic patient ID if demographics still do not resolve one record.
+- Falls back to stronger identifiers like MRN, passport number, driver's license number, or clinic patient number if demographics still do not resolve one record.
 - Registers new patients with full name, date of birth, and phone number.
 - Matches symptoms to specialties with hybrid triage using keyword search over `symptom_specialty_map` plus semantic search over `medical_knowledge`.
 - Finds open slots across doctors or for a specific doctor.
 - Books, reschedules, and cancels appointments.
 - Streams chat responses over Server-Sent Events.
 - Persists conversation state in Postgres using LangGraph's `AsyncPostgresSaver`.
-- Exposes admin APIs for specialties, doctors, patients, appointments, blocks, and slots.
+- Exposes admin APIs for specialties, doctors, patients, patient identifiers, appointments, blocks, and slots.
 - Guides ambiguous identity cases toward staff help, but does not yet have a dedicated human-handoff implementation.
 
 ## Architecture At A Glance
@@ -249,7 +249,7 @@ curl "http://localhost:8000/api/v1/admin/slots/by-specialty?specialty_id=a100000
 ## Key Implementation Notes
 
 - Patient identity is a first-class part of the workflow. For booking, the agent asks whether the patient is new or returning, then starts returning-patient lookup with full name + date of birth.
-- If demographic lookup is ambiguous, the agent asks for phone next and only then falls back to stronger identifiers like MRN or passport number.
+- If demographic lookup is ambiguous, the agent asks for phone next and only then falls back to stronger identifiers like MRN, passport number, driver's license number, or clinic patient number.
 - If identity remains ambiguous, the current implementation guides the conversation toward staff help, but a dedicated human-handoff mechanism has not been implemented yet.
 - Scheduling is computed from recurring availability templates, then filtered by booked appointments and doctor time-off blocks.
 - RAG retrieval uses OpenAI embeddings and a Supabase RPC rather than embedding logic inside the agent tool layer.
