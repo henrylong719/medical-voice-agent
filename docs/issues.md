@@ -1,13 +1,6 @@
 ---
   Critical Issues
 
-  1. Secrets committed in plaintext — .env:1-25
-
-  This is the most urgent problem. Your .env file contains live API keys and database credentials (Supabase service key,
-  Anthropic API key, OpenAI API key, LangSmith API key, Postgres URI with password). Check your .gitignore — if .env isn't
-  listed or the file was committed before the gitignore rule was added, these secrets are in your git history. You should
-  rotate all these keys immediately.
-
   2. SQL injection via ilike in triage — tools.py:636
 
   .ilike("symptom", f"%{symptom}%")
