@@ -103,9 +103,7 @@ _STANDALONE_PATTERNS: list[re.Pattern[str]] = [
     # Breathing emergencies
     re.compile(r"can\s*'?n?o?t\s+breathe?", re.IGNORECASE),
     re.compile(r"(having|have)\s+(a\s+)?hard\s+time\s+breathing", re.IGNORECASE),
-    re.compile(
-        r"(struggling|gasping)\s+(to|for)\s+(breathe?|air|breath)", re.IGNORECASE
-    ),
+    re.compile(r"(struggling|gasping)\s+(to|for)\s+(breathe?|air|breath)", re.IGNORECASE),
     re.compile(r"choking\b", re.IGNORECASE),
     re.compile(r"airway.{0,15}(blocked|closing|swelling)", re.IGNORECASE),
     # Stroke indicators
@@ -122,24 +120,18 @@ _STANDALONE_PATTERNS: list[re.Pattern[str]] = [
     # Seizure
     re.compile(r"(having|have|had)\s+(a\s+)?seizure", re.IGNORECASE),
     # Severe bleeding
-    re.compile(
-        r"(bleeding|blood)\b.{0,15}(won\s*'?t\s+stop|everywhere|heavily|profuse)",
-        re.IGNORECASE,
-    ),
+    re.compile(r"(bleeding|blood)\b.{0,15}(won\s*'?t\s+stop|everywhere|heavily|profuse)",
+               re.IGNORECASE),
     re.compile(r"(severe|uncontrolled|heavy)\s+bleeding", re.IGNORECASE),
     # Anaphylaxis
     re.compile(r"(throat|tongue).{0,15}(swelling|closing|swollen)", re.IGNORECASE),
     re.compile(r"anaphyla", re.IGNORECASE),  # anaphylaxis, anaphylactic
     # Suicidal / self-harm
-    re.compile(
-        r"(want|going|plan)\s+to\s+(kill|hurt|harm)\s+(myself|me)", re.IGNORECASE
-    ),
+    re.compile(r"(want|going|plan)\s+to\s+(kill|hurt|harm)\s+(myself|me)", re.IGNORECASE),
     re.compile(r"(suicidal|end\s+my\s+life|end\s+it\s+all)", re.IGNORECASE),
     # Overdose / poisoning
-    re.compile(
-        r"(took|swallowed|ingested)\s+.{0,20}(pills|poison|bleach|chemicals)",
-        re.IGNORECASE,
-    ),
+    re.compile(r"(took|swallowed|ingested)\s+.{0,20}(pills|poison|bleach|chemicals)",
+               re.IGNORECASE),
     re.compile(r"overdos", re.IGNORECASE),  # overdose, overdosed, overdosing
 ]
 
@@ -152,7 +144,6 @@ _STANDALONE_PATTERNS: list[re.Pattern[str]] = [
 #     (default 1, but some clusters need 2 to avoid false positives)
 #
 # All matching is case-insensitive on the normalized message text.
-
 
 @dataclass(frozen=True, slots=True)
 class SymptomCluster:
@@ -185,6 +176,7 @@ _SYMPTOM_CLUSTERS: tuple[SymptomCluster, ...] = (
             "chest tight",
             "chest pressure",
             "crushing chest",
+            "chest hurts",
             "chest feels heavy",
             "chest is heavy",
             "chest feels tight",
@@ -197,6 +189,10 @@ _SYMPTOM_CLUSTERS: tuple[SymptomCluster, ...] = (
         corroborating_keywords=(
             "left arm",
             "arm numb",
+            "arm is numb",
+            "arm going numb",
+            "arm is going numb",
+            "arm went numb",
             "arm pain",
             "arm tingling",
             "jaw pain",
@@ -322,15 +318,11 @@ _SELF_HARM_RESPONSE = (
 )
 
 _SELF_HARM_PATTERNS: list[re.Pattern[str]] = [
-    re.compile(
-        r"(want|going|plan)\s+to\s+(kill|hurt|harm)\s+(myself|me)", re.IGNORECASE
-    ),
+    re.compile(r"(want|going|plan)\s+to\s+(kill|hurt|harm)\s+(myself|me)", re.IGNORECASE),
     re.compile(r"(suicidal|end\s+my\s+life|end\s+it\s+all)", re.IGNORECASE),
     re.compile(r"don\s*'?t\s+want\s+to\s+(live|be\s+alive|be\s+here)", re.IGNORECASE),
-    re.compile(
-        r"(thinking|thought)\s+(about|of)\s+(killing|hurting)\s+(myself|me)",
-        re.IGNORECASE,
-    ),
+    re.compile(r"(thinking|thought)\s+(about|of)\s+(killing|hurting)\s+(myself|me)",
+               re.IGNORECASE),
 ]
 
 
@@ -436,12 +428,8 @@ _MEDICAL_ADVICE_PATTERNS: list[re.Pattern[str]] = [
         re.IGNORECASE,
     ),
     re.compile(r"(can|should)\s+i\s+take\s+\w+.{0,30}(with|and|while)", re.IGNORECASE),
-    re.compile(
-        r"(is|are)\s+\w+\s+(safe|dangerous|okay|ok)\s+(to\s+take|with)", re.IGNORECASE
-    ),
-    re.compile(
-        r"(how\s+much|what\s+dose|what\s+dosage)\s+.{0,20}should\s+i", re.IGNORECASE
-    ),
+    re.compile(r"(is|are)\s+\w+\s+(safe|dangerous|okay|ok)\s+(to\s+take|with)", re.IGNORECASE),
+    re.compile(r"(how\s+much|what\s+dose|what\s+dosage)\s+.{0,20}should\s+i", re.IGNORECASE),
     re.compile(r"(prescribe|prescription)\s+(me|for)", re.IGNORECASE),
     # Diagnosis questions
     re.compile(r"(what\s+is|what's)\s+(wrong|causing|the\s+cause)", re.IGNORECASE),
@@ -565,12 +553,13 @@ _PROMPT_INJECTION_PATTERNS: list[re.Pattern[str]] = [
     # System prompt extraction
     re.compile(
         r"(show|reveal|display|print|output|repeat|tell)\s+.{0,10}"
-        r"(your|the)\s+"
+        r"(your|the)\s+.{0,15}"
         r"(system\s+prompt|instructions|rules|prompt|programming|initial\s+prompt)",
         re.IGNORECASE,
     ),
     re.compile(
-        r"what\s+(are|is)\s+your\s+(system\s+prompt|instructions|rules|programming)",
+        r"what.{0,15}(your|the)\s+"
+        r"(system\s+prompt\w*|instructions|programming)",
         re.IGNORECASE,
     ),
     # Jailbreak framing
@@ -731,7 +720,6 @@ def screen_input(message_text: str) -> GuardrailResult | None:
 
     return None
 
-
 # ============================================================
 # OUTPUT GUARDRAILS
 # ============================================================
@@ -781,7 +769,7 @@ _OUTPUT_ADVICE_PATTERNS: list[re.Pattern[str]] = [
     ),
     # Dosage advice
     re.compile(
-        r"(take|dose|dosage)\s+.{0,20}(mg|milligram|tablet|pill|capsule|twice|"
+        r"(take|taking|dose|dosage)\s+.{0,20}(mg|milligram|tablet|pill|capsule|twice|"
         r"three\s+times|daily|every\s+\d+\s+hours)",
         re.IGNORECASE,
     ),
@@ -863,13 +851,29 @@ def check_output(agent_response: str) -> list[OutputViolation]:
     normalized = _normalize_text(agent_response)
     violations: list[OutputViolation] = []
 
-    # Check safe patterns first — if a safe pattern matches, skip
-    # that region to avoid false positives.
-    is_safe = any(p.search(normalized) for p in _OUTPUT_SAFE_PATTERNS)
+    # Collect safe pattern match spans — these regions are
+    # legitimate scheduling language that should not trigger
+    # violations (e.g., "I'd recommend seeing a neurologist").
+    safe_spans: list[tuple[int, int]] = []
+    for p in _OUTPUT_SAFE_PATTERNS:
+        for m in p.finditer(normalized):
+            safe_spans.append((m.start(), m.end()))
 
     for pattern in _OUTPUT_ADVICE_PATTERNS:
         match = pattern.search(normalized)
-        if match and not is_safe:
+        if not match:
+            continue
+
+        # Only suppress if this specific match overlaps with a
+        # safe pattern. This prevents a safe phrase in one part
+        # of the response from shielding a violation elsewhere.
+        match_start, match_end = match.start(), match.end()
+        overlaps_safe = any(
+            s_start <= match_end and s_end >= match_start
+            for s_start, s_end in safe_spans
+        )
+
+        if not overlaps_safe:
             violations.append(
                 OutputViolation(
                     category="medical_advice_in_output",
