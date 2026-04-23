@@ -32,7 +32,7 @@ class Settings(BaseSettings):
 
     # OpenAI — used only for embeddings (text-embedding-3-small)
     openai_api_key: str = ""
-    
+
     # AssemblyAI — streaming speech-to-text (Phase 6)
     assemblyai_api_key: str = ""
 
