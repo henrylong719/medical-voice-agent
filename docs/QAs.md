@@ -215,5 +215,49 @@ So the input classifier should catch messages that ask for treatment, diagnosis,
 For prompt injection, we want to be firm but not paranoid. We block obvious manipulation attempts but don't flag normal conversation that happens to contain words like "ignore" or "instructions."
 
 
+Q: LangChain's callback system lets us hook into events at different levels. Do you know how callbacks work in LangChain
 
+How LangChain Callbacks Work
+Think of callbacks as event listeners that sit alongside the LLM pipeline and get notified whenever something happens. Every time the LLM starts thinking, finishes generating, calls a tool, or gets a tool result back, a callback fires.
+LangChain defines a BaseCallbackHandler class with methods like:
+
+```python
+pythonclass BaseCallbackHandler:
+    def on_llm_start(self, serialized, prompts, **kwargs): ...
+    def on_llm_end(self, response, **kwargs): ...
+    def on_tool_start(self, serialized, input_str, **kwargs): ...
+    def on_tool_end(self, output, **kwargs): ...
+    def on_chat_model_start(self, serialized, messages, **kwargs): ...
+    # ... and more
+```
+You subclass it and override the methods you care about. Then you attach your handler to the LLM or the graph, and LangChain automatically calls your methods at the right moments.
+Here's the key insight for PII redaction: LangSmith tracing is itself a callback handler. When you set LANGSMITH_TRACING=true, LangChain registers a built-in callback that sends event data to the LangSmith API. If we modify the data before it reaches that callback, LangSmith only ever sees the redacted version.
+The flow looks like this:
+
+```python
+Tool call happens
+    → on_tool_start fires (with raw data)
+    → Our PII handler intercepts and redacts the data IN PLACE
+    → LangSmith handler sends the (now-redacted) data to the cloud
+```
+
+
+There's a subtlety though. We have two options for where to redact:
+
+Callback handler — intercept events and modify them before LangSmith sees them. The problem: callback data is sometimes read-only or the modification doesn't propagate to the tracing handler.
+Custom LangSmith client — LangSmith's Python SDK supports a before_send hook that processes every trace payload right before it's sent to the API. This is more reliable because it's the last stop before data leaves your server.
+
+I'm going to use option 2 (before_send on the LangSmith client) because it's the officially supported way to do this and guarantees nothing slips through. It works like a middleware — every run that LangSmith is about to send passes through our function first.
+Here's how it plugs in:
+python# In main.py, when setting up LangSmith:
+
+```python
+from langsmith import Client
+
+client = Client(
+    before_send=redact_pii_from_run  # Our function
+)
+```
+
+The redact_pii_from_run function receives the full run payload (inputs, outputs, messages) and returns a modified version with PII masked.
 

@@ -103,7 +103,9 @@ _STANDALONE_PATTERNS: list[re.Pattern[str]] = [
     # Breathing emergencies
     re.compile(r"can\s*'?n?o?t\s+breathe?", re.IGNORECASE),
     re.compile(r"(having|have)\s+(a\s+)?hard\s+time\s+breathing", re.IGNORECASE),
-    re.compile(r"(struggling|gasping)\s+(to|for)\s+(breathe?|air|breath)", re.IGNORECASE),
+    re.compile(
+        r"(struggling|gasping)\s+(to|for)\s+(breathe?|air|breath)", re.IGNORECASE
+    ),
     re.compile(r"choking\b", re.IGNORECASE),
     re.compile(r"airway.{0,15}(blocked|closing|swelling)", re.IGNORECASE),
     # Stroke indicators
@@ -120,18 +122,24 @@ _STANDALONE_PATTERNS: list[re.Pattern[str]] = [
     # Seizure
     re.compile(r"(having|have|had)\s+(a\s+)?seizure", re.IGNORECASE),
     # Severe bleeding
-    re.compile(r"(bleeding|blood)\b.{0,15}(won\s*'?t\s+stop|everywhere|heavily|profuse)",
-               re.IGNORECASE),
+    re.compile(
+        r"(bleeding|blood)\b.{0,15}(won\s*'?t\s+stop|everywhere|heavily|profuse)",
+        re.IGNORECASE,
+    ),
     re.compile(r"(severe|uncontrolled|heavy)\s+bleeding", re.IGNORECASE),
     # Anaphylaxis
     re.compile(r"(throat|tongue).{0,15}(swelling|closing|swollen)", re.IGNORECASE),
     re.compile(r"anaphyla", re.IGNORECASE),  # anaphylaxis, anaphylactic
     # Suicidal / self-harm
-    re.compile(r"(want|going|plan)\s+to\s+(kill|hurt|harm)\s+(myself|me)", re.IGNORECASE),
+    re.compile(
+        r"(want|going|plan)\s+to\s+(kill|hurt|harm)\s+(myself|me)", re.IGNORECASE
+    ),
     re.compile(r"(suicidal|end\s+my\s+life|end\s+it\s+all)", re.IGNORECASE),
     # Overdose / poisoning
-    re.compile(r"(took|swallowed|ingested)\s+.{0,20}(pills|poison|bleach|chemicals)",
-               re.IGNORECASE),
+    re.compile(
+        r"(took|swallowed|ingested)\s+.{0,20}(pills|poison|bleach|chemicals)",
+        re.IGNORECASE,
+    ),
     re.compile(r"overdos", re.IGNORECASE),  # overdose, overdosed, overdosing
 ]
 
@@ -144,6 +152,7 @@ _STANDALONE_PATTERNS: list[re.Pattern[str]] = [
 #     (default 1, but some clusters need 2 to avoid false positives)
 #
 # All matching is case-insensitive on the normalized message text.
+
 
 @dataclass(frozen=True, slots=True)
 class SymptomCluster:
@@ -318,11 +327,15 @@ _SELF_HARM_RESPONSE = (
 )
 
 _SELF_HARM_PATTERNS: list[re.Pattern[str]] = [
-    re.compile(r"(want|going|plan)\s+to\s+(kill|hurt|harm)\s+(myself|me)", re.IGNORECASE),
+    re.compile(
+        r"(want|going|plan)\s+to\s+(kill|hurt|harm)\s+(myself|me)", re.IGNORECASE
+    ),
     re.compile(r"(suicidal|end\s+my\s+life|end\s+it\s+all)", re.IGNORECASE),
     re.compile(r"don\s*'?t\s+want\s+to\s+(live|be\s+alive|be\s+here)", re.IGNORECASE),
-    re.compile(r"(thinking|thought)\s+(about|of)\s+(killing|hurting)\s+(myself|me)",
-               re.IGNORECASE),
+    re.compile(
+        r"(thinking|thought)\s+(about|of)\s+(killing|hurting)\s+(myself|me)",
+        re.IGNORECASE,
+    ),
 ]
 
 
@@ -428,8 +441,12 @@ _MEDICAL_ADVICE_PATTERNS: list[re.Pattern[str]] = [
         re.IGNORECASE,
     ),
     re.compile(r"(can|should)\s+i\s+take\s+\w+.{0,30}(with|and|while)", re.IGNORECASE),
-    re.compile(r"(is|are)\s+\w+\s+(safe|dangerous|okay|ok)\s+(to\s+take|with)", re.IGNORECASE),
-    re.compile(r"(how\s+much|what\s+dose|what\s+dosage)\s+.{0,20}should\s+i", re.IGNORECASE),
+    re.compile(
+        r"(is|are)\s+\w+\s+(safe|dangerous|okay|ok)\s+(to\s+take|with)", re.IGNORECASE
+    ),
+    re.compile(
+        r"(how\s+much|what\s+dose|what\s+dosage)\s+.{0,20}should\s+i", re.IGNORECASE
+    ),
     re.compile(r"(prescribe|prescription)\s+(me|for)", re.IGNORECASE),
     # Diagnosis questions
     re.compile(r"(what\s+is|what's)\s+(wrong|causing|the\s+cause)", re.IGNORECASE),
@@ -719,6 +736,7 @@ def screen_input(message_text: str) -> GuardrailResult | None:
         return result
 
     return None
+
 
 # ============================================================
 # OUTPUT GUARDRAILS
