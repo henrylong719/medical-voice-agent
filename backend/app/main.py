@@ -26,10 +26,27 @@ from app.config import settings
 # from our Pydantic settings. We push them into os.environ here
 # at import time — before any LangChain modules initialize —
 # so tracing is picked up automatically.
+#
+# PII redaction: we pre-initialize the LangSmith cached client
+# singleton with our anonymizer BEFORE any LangChain code runs.
+# LangChain's auto-tracing calls get_cached_client() internally,
+# and since it's already initialized with our anonymizer, all
+# traces will have PII masked automatically.
 if settings.langsmith_api_key:
     os.environ.setdefault("LANGSMITH_API_KEY", settings.langsmith_api_key)
     os.environ.setdefault("LANGSMITH_TRACING", settings.langsmith_tracing)
     os.environ.setdefault("LANGSMITH_PROJECT", settings.langsmith_project)
+
+    from langsmith.run_trees import get_cached_client
+    from app.agent.pii_redactor import redact_pii
+
+    # Pre-initialize the singleton with our anonymizer. This MUST
+    # happen before any LangChain import that triggers tracing,
+    # because get_cached_client() only accepts kwargs on first call.
+    get_cached_client(anonymizer=redact_pii)
+    logging.getLogger(__name__).info(
+        "LangSmith PII redaction enabled — patient data will be masked in traces"
+    )
 
 from app.api.admin.specialty_routes import router as specialty_router
 from app.api.admin.doctor_routes import router as doctor_router

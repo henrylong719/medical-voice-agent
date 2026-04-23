@@ -193,3 +193,71 @@ The None state is essentially the Supervisor saying "I don't have enough informa
 Q: Why can't we just make the prompts stricter instead of building a separate guardrails layer? What's the fundamental limitation of relying on prompts alone for safety?
 
 As the conversation grows longer, the system prompt gets pushed further from the model's attention window, and compliance degrades. There's also a more fundamental issue: the LLM is a single point of failure. No matter how good your prompt is, it's still asking the model to behave — not forcing it. A separate guardrails layer acts as an independent check that doesn't share the same failure mode.
+
+Q:  "What medication should I take?" is clearly out of scope. But "Will the dermatologist be able to help with my eczema?" is borderline — it's about whether we offer the right service, which IS in scope. Where would you draw the line between "medical advice request" and "legitimate scheduling question that mentions a medical topic"?
+
+The strict approach ("reject anything medical that isn't scheduling") is safer but creates a frustrating experience. Imagine this conversation:
+Patient: "Will a dermatologist help with my eczema, or do I need an allergist?"
+Agent: "I'm sorry, I can't provide medical advice. Would you like to book an appointment?"
+That's technically correct, but the patient was asking a legitimate question about which specialist to book with — which IS our scope. The triage agent already does this! It matches symptoms to specialties. So rejecting that question would actually break the flow we've built.
+
+Here's how I'd draw the line:In scope 
+(let through).                                         Out of scope (deflect)
+"Which specialist should I see for X?"           "What medication should I take for X?"
+"Can a dermatologist help with eczema?"          "Is ibuprofen safe with blood pressure meds?"
+"Is my symptom serious enough to see a doctor?"  "What's causing my headache?"
+"Do you have an ENT specialist?"                 "How do I treat my sore throat at home?"
+
+The pattern: questions about who to see = scheduling scope. Questions about what to do/take/diagnose = medical advice.
+
+So the input classifier should catch messages that ask for treatment, diagnosis, medication, or prognosis — but NOT messages that ask about specialists or whether symptoms warrant an appointment. Those should flow to triage normally.
+
+For prompt injection, we want to be firm but not paranoid. We block obvious manipulation attempts but don't flag normal conversation that happens to contain words like "ignore" or "instructions."
+
+
+Q: LangChain's callback system lets us hook into events at different levels. Do you know how callbacks work in LangChain
+
+How LangChain Callbacks Work
+Think of callbacks as event listeners that sit alongside the LLM pipeline and get notified whenever something happens. Every time the LLM starts thinking, finishes generating, calls a tool, or gets a tool result back, a callback fires.
+LangChain defines a BaseCallbackHandler class with methods like:
+
+```python
+pythonclass BaseCallbackHandler:
+    def on_llm_start(self, serialized, prompts, **kwargs): ...
+    def on_llm_end(self, response, **kwargs): ...
+    def on_tool_start(self, serialized, input_str, **kwargs): ...
+    def on_tool_end(self, output, **kwargs): ...
+    def on_chat_model_start(self, serialized, messages, **kwargs): ...
+    # ... and more
+```
+You subclass it and override the methods you care about. Then you attach your handler to the LLM or the graph, and LangChain automatically calls your methods at the right moments.
+Here's the key insight for PII redaction: LangSmith tracing is itself a callback handler. When you set LANGSMITH_TRACING=true, LangChain registers a built-in callback that sends event data to the LangSmith API. If we modify the data before it reaches that callback, LangSmith only ever sees the redacted version.
+The flow looks like this:
+
+```python
+Tool call happens
+    → on_tool_start fires (with raw data)
+    → Our PII handler intercepts and redacts the data IN PLACE
+    → LangSmith handler sends the (now-redacted) data to the cloud
+```
+
+
+There's a subtlety though. We have two options for where to redact:
+
+Callback handler — intercept events and modify them before LangSmith sees them. The problem: callback data is sometimes read-only or the modification doesn't propagate to the tracing handler.
+Custom LangSmith client — LangSmith's Python SDK supports a before_send hook that processes every trace payload right before it's sent to the API. This is more reliable because it's the last stop before data leaves your server.
+
+I'm going to use option 2 (before_send on the LangSmith client) because it's the officially supported way to do this and guarantees nothing slips through. It works like a middleware — every run that LangSmith is about to send passes through our function first.
+Here's how it plugs in:
+python# In main.py, when setting up LangSmith:
+
+```python
+from langsmith import Client
+
+client = Client(
+    before_send=redact_pii_from_run  # Our function
+)
+```
+
+The redact_pii_from_run function receives the full run payload (inputs, outputs, messages) and returns a modified version with PII masked.
+
