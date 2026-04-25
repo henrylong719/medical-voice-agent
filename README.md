@@ -1,129 +1,190 @@
 # Medical Voice Agent
 
-Medical Voice Agent is a backend-first prototype of a medical clinic scheduling assistant. It combines a FastAPI API, Supabase/Postgres, LangGraph, Anthropic, and OpenAI embeddings to identify patients through a demographic-first intake flow, triage symptoms, find appointment availability, and manage bookings through a conversational interface.
+An AI-powered voice agent that lets patients call a medical clinic, describe symptoms, get triaged to the right specialist, and book appointments — entirely through natural voice conversation.
 
-The active implementation lives in [`backend/`](backend/). The planning history and future-phase notes live in [`docs/`](docs/).
+Built from scratch as a self-study project covering RAG, agent orchestration, real-time voice pipelines, guardrails, evaluation, and MCP.
 
 ## Current Status
 
-The repository is currently in a Phase 4-style state:
+Phases 1 through 5 are complete. Phase 6 (voice pipeline) is in progress.
 
-- Phase 1 foundations are in place: schema, seed data, admin APIs, scheduling engine, and time utilities.
-- Phase 2 agent work is in place: LangGraph agent, tool calling, patient identification, booking/rescheduling/cancellation, and chat endpoints.
-- Phase 3 hybrid triage work is in place: pgvector-backed medical knowledge retrieval plus keyword symptom matching.
-- Phase 4 multi-agent routing is in place: Supervisor + Intake + Triage + Scheduling agents.
+At the start of Phase 6, the multi-agent system (supervisor + 3 sub-agents) was simplified to a single voice-optimized agent. The multi-agent code is preserved on disk but not active. This lets voice development proceed without multi-agent routing complexity — the two systems solve orthogonal problems and will be recombined later.
 
-## Upcoming Milestones
+| Phase | Focus | Status |
+|---|---|---|
+| 1. Database & Backend | Schema, slot engine, time utils, admin API, seed data | Complete |
+| 2. LangChain Agent | Tool calling, system prompt, streaming, conversation memory | Complete |
+| 3. RAG Triage | pgvector, embeddings, hybrid keyword + semantic search | Complete |
+| 4. Multi-Agent System | Supervisor + intake/triage/scheduling sub-agents | Complete (preserved, temporarily replaced by single agent) |
+| 5. Guardrails & Safety | Input/output filtering, emergency detection, PII redaction | Complete |
+| 6. Voice Pipeline | STT + TTS streaming, WebSocket, barge-in, voice UX | **In progress** |
+| 7. Evals & Optimization | LangSmith datasets, automated scoring, prompt iteration | Upcoming |
+| 8. MCP Integration | MCP server, tools/resources/prompts, Claude Desktop | Upcoming |
 
-- **Phase 5:** Emergency symptoms trigger an immediate escalation response, and the assistant refuses medical advice while staying in scheduling mode.
-- **Phase 6:** A patient can complete an end-to-end appointment workflow entirely by voice through the browser.
-- **Phase 7:** The project has measurable eval coverage for quality and safety, with regression checks for prompt changes.
-- **Phase 8:** The medical tools are available through an MCP server and usable from an MCP-compatible client.
+## What It Does Today
 
-## What The Project Does Today
-
-- Asks booking patients whether they are new or returning.
-- Looks up returning patients by full name + date of birth first.
-- Uses phone as an optional disambiguator if demographic lookup is ambiguous.
-- Falls back to stronger identifiers like MRN, passport number, driver's license number, or clinic patient number if demographics still do not resolve one record.
-- Registers new patients with full name, date of birth, and phone number.
-- Matches symptoms to specialties with hybrid triage using keyword search over `symptom_specialty_map` plus semantic search over `medical_knowledge`.
-- Finds open slots across doctors or for a specific doctor.
-- Books, reschedules, and cancels appointments.
+- Greets patients and determines intent (book, reschedule, cancel, or general question).
+- Identifies returning patients by demographics (name + DOB), with progressive fallback to phone, then strong identifiers (MRN, passport, driver's license, clinic patient number).
+- Registers new patients with name, DOB, and phone.
+- Triages symptoms using hybrid search: keyword matching on `symptom_specialty_map` plus semantic retrieval over `medical_knowledge` via pgvector. Falls back gracefully if the embedding API is unavailable.
+- Computes available appointment slots on the fly from doctor weekly availability templates, filtering out booked slots and time-off blocks.
+- Books, reschedules, and cancels appointments with explicit patient confirmation at each step.
+- Detects emergency symptoms (cardiac, stroke, anaphylaxis, etc.) and immediately directs patients to call 911.
+- Blocks prompt injection attempts, medical advice requests, and off-topic queries before they reach the agent.
+- Scans agent responses for medical advice violations and rewrites them if detected.
+- Redacts PII (names, DOBs, phone numbers, identifiers) from LangSmith traces automatically.
 - Streams chat responses over Server-Sent Events.
-- Persists conversation state in Postgres using LangGraph's `AsyncPostgresSaver`.
-- Exposes admin APIs for specialties, doctors, patients, patient identifiers, appointments, blocks, and slots.
-- Guides ambiguous identity cases toward staff help, but does not yet have a dedicated human-handoff implementation.
+- Persists conversation state in Postgres via LangGraph's `AsyncPostgresSaver`.
+- Streams audio to AssemblyAI for real-time speech-to-text (STT client built and tested).
 
-## Architecture At A Glance
+## Architecture
 
-1. FastAPI exposes admin endpoints and agent-facing chat endpoints.
-2. The chat API calls a LangGraph-based agent configured in `backend/app/agent/graph.py`.
-3. The agent uses tool calls defined in `backend/app/agent/tools.py`.
-4. Tools talk directly to Supabase for patient, doctor, appointment, and specialty data.
-5. The slot engine computes availability from recurring doctor schedules minus booked appointments and doctor blocks.
-6. Hybrid triage combines keyword lookup in `symptom_specialty_map` with semantic retrieval through pgvector via `match_medical_knowledge`.
-7. Conversation memory is persisted in Supabase Postgres via `SUPABASE_DB_URI`.
+```
+Browser / Client
+    │
+    ├── POST /api/v1/chat         (text: SSE streaming)
+    ├── POST /api/v1/chat/invoke   (text: full JSON response)
+    └── WS /ws/voice               (voice: bidirectional audio — Phase 6, to build)
+          │
+          ▼
+    ┌─────────────────────────────────────┐
+    │  FastAPI                            │
+    │                                     │
+    │  screen_input()  ← input guardrails │
+    │       │                             │
+    │       ▼                             │
+    │  Single Agent (Claude Haiku 4.5)    │
+    │  ┌──────────────────────────────┐   │
+    │  │ 10 tools:                    │   │
+    │  │  find_patients_by_demo...    │   │
+    │  │  find_patient_by_identifier  │   │
+    │  │  register_patient            │   │
+    │  │  triage_symptoms (RAG)       │   │
+    │  │  find_slots                  │   │
+    │  │  book_appointment            │   │
+    │  │  find_appointment            │   │
+    │  │  reschedule_appointment      │   │
+    │  │  cancel_appointment          │   │
+    │  │  list_specialties            │   │
+    │  └──────────────────────────────┘   │
+    │       │                             │
+    │       ▼                             │
+    │  sanitize_output() ← output guard.  │
+    └─────────┬───────────────────────────┘
+              │
+              ▼
+    ┌─────────────────────┐    ┌──────────────┐
+    │  Supabase Postgres  │    │  pgvector     │
+    │  9 tables + RPCs    │    │  medical_     │
+    │  + checkpointer     │    │  knowledge    │
+    └─────────────────────┘    └──────────────┘
+```
+
+For the voice pipeline (Phase 6, in progress):
+
+```
+Browser Mic → WebSocket → AssemblyAI STT → Transcript → Agent → Text → Cartesia TTS → Audio → WebSocket → Browser Speaker
+```
 
 ## Project Layout
 
-```text
-.
-├── backend/
-│   ├── app/
-│   │   ├── agent/          # system prompt, tools, and LangGraph agent wiring
-│   │   ├── api/            # admin and chat FastAPI routes
-│   │   ├── models/         # Pydantic models and typed DB row shapes
-│   │   ├── services/       # scheduling, time parsing, RAG retrieval, ingestion
-│   │   ├── config.py       # environment-driven settings
-│   │   ├── main.py         # FastAPI entry point
-│   │   └── supabase_client.py
-│   ├── sql/
-│   │   ├── 001_schema.sql
-│   │   ├── 002_seed.sql
-│   │   ├── 003_create_doctor_with_details.sql
-│   │   ├── 004_finalize_reschedule_appointment.sql
-│   │   └── 005_rag.sql
-│   ├── .env.example
-│   ├── pyproject.toml
-│   └── uv.lock
-├── docs/                   # phase notes, planning prompts, flow diagram
-├── LICENSE
-└── todo.md
+```
+backend/
+├── app/
+│   ├── agent/
+│   │   ├── voice_prompt.py       # Active: voice-optimized single-agent prompt
+│   │   ├── graph.py              # Agent graph + public API (stream_agent_response, invoke_agent)
+│   │   ├── tools.py              # 10 tools with Pydantic schemas
+│   │   ├── guardrails.py         # Input + output guardrails (~900 lines)
+│   │   ├── pii_redactor.py       # PII masking for LangSmith traces
+│   │   ├── supervisor.py         # Preserved: Phase 4 supervisor routing
+│   │   ├── agents.py             # Preserved: Phase 4 sub-agent definitions
+│   │   └── state.py              # Preserved: Phase 4 multi-agent state
+│   ├── voice/
+│   │   ├── stt_client.py         # AssemblyAI v3 streaming (built, tested)
+│   │   └── test_stt.py           # Standalone STT test script
+│   ├── api/
+│   │   ├── admin/                # CRUD endpoints for all domain entities
+│   │   └── chat/routes.py        # SSE streaming + invoke endpoints
+│   ├── services/
+│   │   ├── slot_engine.py        # On-the-fly availability computation
+│   │   ├── time_utils.py         # NLP date parsing, timezone handling
+│   │   ├── rag_retriever.py      # Embedding + vector similarity search
+│   │   ├── knowledge_chunks.py   # Medical knowledge content
+│   │   └── ingest_knowledge.py   # Batch embed + insert into pgvector
+│   ├── models/                   # Pydantic models + TypedDicts
+│   ├── config.py                 # Pydantic settings from .env
+│   ├── main.py                   # FastAPI app entry point
+│   └── supabase_client.py        # Supabase client singleton
+├── tests/                        # ~600 tests across 20+ test files
+├── evals/                        # 13 end-to-end eval scripts
+├── sql/
+│   ├── 001_schema.sql            # 9 tables with constraints and indexes
+│   ├── 002_seed.sql              # Specialties, doctors, patients, mappings
+│   ├── 003_create_doctor_with_details.sql  # Transactional RPC
+│   ├── 004_finalize_reschedule_appointment.sql
+│   └── 005_rag.sql               # pgvector extension + medical_knowledge table
+└── pyproject.toml
 ```
 
 ## Tech Stack
 
-- Python 3.12
-- `uv` for environment and dependency management
-- FastAPI + Uvicorn
-- Supabase + PostgreSQL
-- pgvector for semantic retrieval
-- LangChain + LangGraph
-- Anthropic Claude for agent responses
-- OpenAI embeddings for semantic search
-- LangSmith for tracing and observability
+| Layer | Technology | Purpose |
+|---|---|---|
+| Language | Python 3.12+ | All backend code |
+| Backend | FastAPI + uvicorn | REST API, WebSocket, validation |
+| Database | Supabase (PostgreSQL) | Relational data, RPC functions |
+| Vector Store | pgvector (in Supabase) | Embeddings for RAG triage |
+| LLM | Claude Haiku 4.5 | Agent reasoning and tool calling |
+| Agent Framework | LangChain + LangGraph | Tool binding, agent graph, checkpointer |
+| Observability | LangSmith | Tracing, evals, prompt debugging |
+| Embeddings | OpenAI text-embedding-3-small | Symptom text → vectors for RAG |
+| STT | AssemblyAI Streaming v3 | Real-time speech-to-text |
+| TTS | Cartesia Sonic 3 | Real-time text-to-speech (Phase 6) |
+| Package Manager | uv | Fast Python dependency management |
 
 ## Setup
 
-### 1. Prerequisites
+### Prerequisites
 
 - Python 3.12+
-- [`uv`](https://docs.astral.sh/uv/)
+- [uv](https://docs.astral.sh/uv/)
 - A Supabase project
 - An Anthropic API key
-- An OpenAI API key for embedding ingestion and semantic retrieval
-- A LangSmith key if you want tracing
+- An OpenAI API key (for embeddings)
+- An AssemblyAI API key (for voice, Phase 6)
+- A Cartesia API key (for voice, Phase 6)
+- A LangSmith API key (optional, for tracing)
 
-### 2. Configure Environment Variables
+### 1. Configure Environment
 
 ```bash
 cd backend
 cp .env.example .env
 ```
 
-Fill in the important values in `backend/.env`:
+Fill in `backend/.env`:
 
 | Variable | Required | Purpose |
-| --- | --- | --- |
+|---|---|---|
 | `SUPABASE_URL` | Yes | Supabase project URL |
-| `SUPABASE_SERVICE_KEY` | Yes | Backend service-role key |
-| `SUPABASE_DB_URI` | Yes for chat | Direct Postgres URI used by `AsyncPostgresSaver` |
+| `SUPABASE_SERVICE_KEY` | Yes | Backend service-role key (never expose to clients) |
+| `SUPABASE_DB_URI` | Yes for chat | Direct Postgres URI for `AsyncPostgresSaver` |
 | `ANTHROPIC_API_KEY` | Yes for chat | Claude API key |
 | `ANTHROPIC_MODEL` | No | Defaults to `claude-haiku-4-5-20251001` |
-| `OPENAI_API_KEY` | Yes for Phase 3 RAG | Embeddings for ingestion and semantic triage |
+| `OPENAI_API_KEY` | Yes for RAG | Embeddings for ingestion and semantic triage |
+| `ASSEMBLYAI_API_KEY` | Phase 6 | Streaming speech-to-text |
+| `CARTESIA_API_KEY` | Phase 6 | Streaming text-to-speech |
 | `LANGSMITH_API_KEY` | Optional | LangSmith tracing |
 | `LANGSMITH_TRACING` | Optional | Usually `true` |
-| `LANGSMITH_PROJECT` | Optional | Trace grouping/project name |
+| `LANGSMITH_PROJECT` | Optional | Trace grouping name |
 | `TIMEZONE` | No | Clinic timezone, defaults to `America/Chicago` |
 | `SCHEDULING_HORIZON_DAYS` | No | How far ahead to search for slots |
-| `DEFAULT_SLOT_DURATION_MIN` | No | Fallback slot duration |
+| `DEFAULT_SLOT_DURATION_MIN` | No | Fallback slot length in minutes |
 
-Keep the service-role key local to the backend only. Do not expose it to a browser client.
+### 2. Initialize Database
 
-### 3. Initialize Supabase
-
-Run these SQL files in your Supabase SQL editor, in this order:
+Run these SQL files in your Supabase SQL editor, in order:
 
 1. `backend/sql/001_schema.sql`
 2. `backend/sql/002_seed.sql`
@@ -131,11 +192,7 @@ Run these SQL files in your Supabase SQL editor, in this order:
 4. `backend/sql/004_finalize_reschedule_appointment.sql`
 5. `backend/sql/005_rag.sql`
 
-Notes:
-
-- The first four files get the clinic data model, sample data, doctor-creation RPC, and reschedule-finalization RPC in place.
-- `005_rag.sql` enables `pgvector`, creates `medical_knowledge`, and adds the `match_medical_knowledge` RPC used by hybrid triage.
-- If you reset the `public` schema in Supabase, make sure `service_role` privileges are restored before running ingestion scripts. The schema SQL now includes the required grants, but for existing projects you can re-run:
+If you reset the `public` schema, restore `service_role` privileges:
 
 ```sql
 grant usage on schema public to service_role;
@@ -151,74 +208,65 @@ alter default privileges in schema public
   grant all privileges on routines to service_role;
 ```
 
-- If `python -m app.services.ingest_knowledge` fails with `permission denied for table medical_knowledge`, this is the first thing to check. Also confirm that `SUPABASE_SERVICE_KEY` in `backend/.env` is the service-role key, not the anon key.
-- `service_role` is backend-only and must never be exposed to browser clients, mobile apps, or public code.
-
-### 4. Install Dependencies
+### 3. Install Dependencies
 
 ```bash
 cd backend
 uv sync
 ```
 
-### 5. Ingest Medical Knowledge Chunks
+### 4. Ingest Medical Knowledge
 
-This populates the `medical_knowledge` table with embedded symptom-cluster passages used by semantic triage.
+Populates the `medical_knowledge` table with embedded symptom-cluster passages for RAG triage:
 
 ```bash
 cd backend
 uv run python -m app.services.ingest_knowledge
 ```
 
-### 6. Run The API
+### 5. Run the API
 
 ```bash
 cd backend
 uv run uvicorn app.main:app --reload
 ```
 
-Open:
+- Swagger UI: http://localhost:8000/docs
+- Health check: http://localhost:8000/health
 
-- Swagger UI: `http://localhost:8000/docs`
-- Health check: `http://localhost:8000/health`
+## API Endpoints
 
-## API Overview
+### Admin (under `/api/v1/admin`)
 
-### Admin Endpoints
+| Method | Endpoint | Description |
+|---|---|---|
+| GET | `/specialties` | List all specialties |
+| GET | `/specialties/{id}` | Get a specialty |
+| GET | `/doctors` | List all doctors |
+| GET | `/doctors/{id}` | Get a doctor with schedule |
+| POST | `/doctors` | Create a doctor with availability |
+| GET | `/patients` | List patients |
+| POST | `/patients/search` | Search by demographics |
+| GET | `/patients/{id}` | Get a patient |
+| POST | `/patients` | Register a patient |
+| POST | `/patients/{id}/identifiers` | Attach a strong identifier |
+| GET | `/appointments` | List appointments |
+| GET | `/appointments/{id}` | Get an appointment |
+| GET | `/blocks` | List doctor time-off blocks |
+| POST | `/blocks` | Create a time-off block |
+| GET | `/slots/by-specialty` | Find available slots by specialty |
+| GET | `/slots/by-doctor` | Find available slots by doctor |
 
-Mounted under `/api/v1/admin`:
+### Chat (under `/api/v1`)
 
-- `GET /specialties`
-- `GET /specialties/{specialty_id}`
-- `GET /doctors`
-- `GET /doctors/{doctor_id}`
-- `POST /doctors`
-- `GET /patients`
-- `POST /patients/search`
-- `GET /patients/{patient_id}`
-- `POST /patients`
-- `POST /patients/{patient_id}/identifiers`
-- `GET /appointments`
-- `GET /appointments/{appointment_id}`
-- `GET /blocks`
-- `POST /blocks`
-- `GET /slots/by-specialty`
-- `GET /slots/by-doctor`
-
-### Chat Endpoints
-
-Mounted under `/api/v1`:
-
-- `POST /chat`
-  Streaming SSE response.
-- `POST /chat/invoke`
-  Full JSON response for easier testing.
+| Method | Endpoint | Description |
+|---|---|---|
+| POST | `/chat` | Streaming SSE response |
+| POST | `/chat/invoke` | Full JSON response (easier for testing) |
 
 ## Example Requests
 
 ### Streaming Chat
-
-Reuse the same `thread_id` across messages if you want conversation memory.
 
 ```bash
 curl -N -X POST http://localhost:8000/api/v1/chat \
@@ -246,53 +294,45 @@ curl -X POST http://localhost:8000/api/v1/chat/invoke \
 curl "http://localhost:8000/api/v1/admin/slots/by-specialty?specialty_id=a1000000-0000-0000-0000-000000000001&preferred_day=next%20monday&preferred_time=morning"
 ```
 
-## Key Implementation Notes
+### STT Test
 
-- Patient identity is a first-class part of the workflow. For booking, the agent asks whether the patient is new or returning, then starts returning-patient lookup with full name + date of birth.
-- If demographic lookup is ambiguous, the agent asks for phone next and only then falls back to stronger identifiers like MRN, passport number, driver's license number, or clinic patient number.
-- If identity remains ambiguous, the current implementation guides the conversation toward staff help, but a dedicated human-handoff mechanism has not been implemented yet.
-- Scheduling is computed from recurring availability templates, then filtered by booked appointments and doctor time-off blocks.
-- RAG retrieval uses OpenAI embeddings and a Supabase RPC rather than embedding logic inside the agent tool layer.
-- If semantic retrieval is unavailable, the triage tool falls back to keyword results instead of crashing the whole flow.
-- The seed data includes 10 specialties, 8 doctors, symptom mappings, patients, patient identifiers, and appointment data for development.
+```bash
+# Generate a test WAV (macOS):
+say -o test.wav --data-format=LEI16@16000 "I have a headache and my vision is blurry"
 
-## Validation And Smoke Tests
+# Stream it to AssemblyAI:
+cd backend
+uv run python -m app.voice.test_stt test.wav
+```
 
-Interactive API docs are available at `http://localhost:8000/docs`.
+## Testing
 
-For automated multi-turn workflow tests that exercise the real Supervisor and
-LangGraph routing without Postman:
+### Unit and Integration Tests
 
 ```bash
 cd backend
-uv run python -m pytest tests/test_workflows.py
+uv run python -m pytest tests/
 ```
 
-These tests use an in-memory checkpointer plus scripted sub-agent doubles, so
-they cover conversation flow and state transitions without calling external LLM
-APIs.
+The test suite includes ~600 tests covering guardrails (172 tests), adversarial inputs (86 tests), PII redaction (40 tests), supervisor routing, sub-agent behavior, graph structure, end-to-end conversation workflows, tools, slot engine, time utils, and RAG retrieval.
 
-For the opt-in eval suite under `backend/evals`:
+### End-to-End Evals
 
-- `uv sync` is enough for the Python dependencies used by the eval suite, so you do not need separate install steps before running them.
-- The eval fixtures currently tag seeded rows for cleanup, so your test Supabase project needs a nullable `eval_tag` column on both `patients` and `appointments`.
-- Most evals call the real agent graph directly and use real external services, so they can cost money and should be run against a test Supabase project, not production.
+The `evals/` directory contains 13 eval scripts that test complete multi-turn conversations against the real agent graph. These call external LLM APIs and cost money — run against a test Supabase project.
 
-Add the eval-only columns once in your test database:
+Before running evals, add the eval-only columns to your test database:
 
 ```sql
 ALTER TABLE patients ADD COLUMN IF NOT EXISTS eval_tag text;
 ALTER TABLE appointments ADD COLUMN IF NOT EXISTS eval_tag text;
 ```
 
-Run one eval and print the safety and quality report to stdout:
+Run a single eval:
 
 ```bash
 cd backend
 RUN_EVALS=1 uv run pytest evals/test_eval_identity_ambiguity.py -s
 ```
-
-The `-s` flag is important because it prints pass rates and failed transcripts.
 
 Run the full eval suite:
 
@@ -301,52 +341,36 @@ cd backend
 RUN_EVALS=1 uv run pytest evals -s
 ```
 
-If you include the HTTP contract evals `evals/test_eval_admin_dob_validation.py`
-or `evals/test_eval_streaming_contract.py`, start the API first:
+The `-s` flag prints pass rates and failed transcripts.
 
-```bash
-cd backend
-uv run uvicorn app.main:app --reload
-```
+For HTTP contract evals (`test_eval_admin_dob_validation.py`, `test_eval_streaming_contract.py`), start the API first. They default to `http://localhost:8000` or use `EVAL_BASE_URL`.
 
-Those tests default to `http://localhost:8000`, or you can point them at a
-different server with `EVAL_BASE_URL`.
-
-LR-11 (RAG degradation) is not covered by the automated eval suite. It requires
-removing `OPENAI_API_KEY` at runtime to force semantic retrieval failure, which
-is environment-destructive and better tested manually in a dedicated test setup.
-
-For the RAG retriever smoke test:
+### RAG Retriever Smoke Test
 
 ```bash
 cd backend
 uv run python -m app.services.test_retriever
 ```
 
-This script expects:
+Requires `OPENAI_API_KEY`, applied `005_rag.sql`, and ingested knowledge chunks.
 
-- `OPENAI_API_KEY` to be configured
-- `backend/sql/005_rag.sql` to have been applied
-- `medical_knowledge` to be populated via the ingestion script
+## Key Design Decisions
 
-## Roadmap And Docs
+**Slot computation is on-the-fly.** Doctors define weekly availability templates, and the slot engine generates concrete slots for a requested date range, subtracting booked appointments and time-off blocks. No cron jobs or pre-generated slot tables.
 
-The docs folder contains both earlier phase notes and the current long-form roadmap.
+**Hybrid triage combines keyword and semantic search.** The `triage_symptoms` tool runs keyword matching on `symptom_specialty_map` and vector similarity search on `medical_knowledge` in parallel, then merges and ranks results. If the embedding API is down, keyword results still work.
 
-- [Current architecture and learning plan](docs/medical_voice_agent_plan_v3.md)
-- [Phase 1 notes](<docs/Medical Voice Agent — Project Instruction Prompt_phase1.md>)
-- [Combined phase status notes](<docs/Medical Voice Agent — Project Instruction Prompt_phases.md>)
-- [Original project planning prompt](<docs/Medical Voice Agent — Project Instruction Prompt.md>)
-- [Long-form working notes](docs/record.md)
+**Guardrails are deterministic, not prompt-based.** Emergency detection, prompt injection blocking, and medical advice filtering use regex and rule-based classifiers that run before and after the LLM. They cannot be bypassed by clever prompting.
 
-Based on the current implementation, Phases 1 through 4 are in place. The remaining roadmap is:
+**PII redaction happens at the tracing layer.** Patient names, dates of birth, phone numbers, and identifiers are masked before they reach LangSmith, using a pre-initialized anonymizer on the LangSmith client singleton.
 
-| Phase | Focus | Duration | Goal |
-| --- | --- | --- | --- |
-| **5. Guardrails & Medical Safety** | Safety boundaries, emergency detection, scope control, PII hygiene | 1-2 weeks | Add input/output guardrails so the assistant stays in scheduling scope, catches red-flag symptoms, and handles sensitive data more safely. |
-| **6. Real-Time Voice Pipeline** | Streaming STT/TTS, WebSockets, barge-in, spoken UX | 2-4 weeks | Turn the text-based backend into a realtime voice experience with AssemblyAI STT, Cartesia TTS, and a FastAPI WebSocket pipeline. |
-| **7. Evaluation, Testing & Prompt Optimization** | LangSmith datasets, automated scoring, regression coverage | 2-3 weeks | Build a repeatable eval system for triage accuracy, safety, end-to-end flows, and prompt iteration. |
-| **8. MCP Integration** | MCP server, tools/resources/prompts, stdio + SSE transports | 1-2 weeks | Expose scheduling and triage capabilities through a standards-compliant MCP server for Claude Desktop and other MCP clients. |
+**Single-agent for voice, multi-agent preserved.** The voice pipeline uses a simplified single-agent setup so voice UX can be developed without orchestration complexity. The multi-agent system (supervisor + 3 sub-agents, ~1,700 lines) is preserved on disk and will be reactivated with voice-adapted prompts once the pipeline is solid.
+
+## Docs
+
+- [Architecture and learning plan](docs/medical_voice_agent_plan_v3.md) — full 8-phase roadmap with concepts and implementation details.
+- [QA notes](docs/QAs.md) — questions and answers from the learning process.
+- [Known issues](docs/issues.md) — tracked bugs and edge cases.
 
 ## License
 
