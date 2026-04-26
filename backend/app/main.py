@@ -23,6 +23,8 @@ from app.api.main import api_router
 
 from app.core.config import settings
 
+from app.agent.graph import cleanup_checkpointer
+
 # ── LangSmith environment setup ──────────────────────────────
 # LangSmith's SDK reads config from environment variables, not
 # from our Pydantic settings. We push them into os.environ here
@@ -49,15 +51,6 @@ if settings.LANGSMITH_API_KEY:
     logging.getLogger(__name__).info(
         "LangSmith PII redaction enabled — patient data will be masked in traces"
     )
-
-from app.api.routes.admin.specialty_routes import router as specialty_router
-from app.api.routes.admin.doctor_routes import router as doctor_router
-from app.api.routes.admin.patient_routes import router as patient_router
-from app.api.routes.admin.appointment_routes import router as appointment_router
-from app.api.routes.admin.block_routes import router as block_router
-from app.api.routes.admin.slot_routes import router as slot_router
-from app.api.routes.chat.chat_routes import router as chat_router
-from app.agent.graph import cleanup_checkpointer
 
 
 @asynccontextmanager

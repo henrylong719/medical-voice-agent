@@ -77,20 +77,15 @@ def read_wav_as_pcm(path: Path) -> bytes:
             print("  Converting stereo to mono...")
             samples = struct.unpack(f"<{n_frames * 2}h", pcm_data)
             mono_samples = [
-                (samples[i] + samples[i + 1]) // 2
-                for i in range(0, len(samples), 2)
+                (samples[i] + samples[i + 1]) // 2 for i in range(0, len(samples), 2)
             ]
             pcm_data = struct.pack(f"<{len(mono_samples)}h", *mono_samples)
 
         # If sample rate doesn't match, warn (we won't resample here —
         # for testing, just use a file recorded at 16kHz)
         if framerate != SAMPLE_RATE:
-            print(
-                f"  WARNING: File is {framerate}Hz but STT expects {SAMPLE_RATE}Hz."
-            )
-            print(
-                f"  Transcription may be inaccurate. Re-record at {SAMPLE_RATE}Hz."
-            )
+            print(f"  WARNING: File is {framerate}Hz but STT expects {SAMPLE_RATE}Hz.")
+            print(f"  Transcription may be inaccurate. Re-record at {SAMPLE_RATE}Hz.")
             print()
 
         return pcm_data

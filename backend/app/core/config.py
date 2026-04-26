@@ -12,7 +12,11 @@ from pathlib import Path
 from typing import Annotated, Any, Literal
 
 from pydantic import AnyUrl, BeforeValidator, computed_field
-from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, SettingsConfigDict
+from pydantic_settings import (
+    BaseSettings,
+    PydanticBaseSettingsSource,
+    SettingsConfigDict,
+)
 
 
 def parse_cors(v: Any) -> list[str] | str:
@@ -22,19 +26,19 @@ def parse_cors(v: Any) -> list[str] | str:
         return v
     raise ValueError(v)
 
+
 class Settings(BaseSettings):
     """All app configuration in one place."""
-    
+
     model_config = SettingsConfigDict(
         # Use top level .env file (one level above ./backend/)
         env_file=".env",
         env_ignore_empty=True,
         extra="ignore",
     )
-    
-    
+
     API_V1_STR: str = "/api/v1"
-    
+
     # App environment
     SECRET_KEY: str = secrets.token_urlsafe(32)
     # 60 minutes * 24 hours * 8 days = 8 days
@@ -45,7 +49,6 @@ class Settings(BaseSettings):
     BACKEND_CORS_ORIGINS: Annotated[
         list[AnyUrl] | str, BeforeValidator(parse_cors)
     ] = []
-    
 
     @computed_field  # type: ignore[prop-decorator]
     @property
@@ -54,15 +57,14 @@ class Settings(BaseSettings):
             self.FRONTEND_HOST
         ]
 
-    
     # Anthropic (Claude) — used by the LangChain agent
     ANTHROPIC_API_KEY: str = ""
     ANTHROPIC_MODEL: str = "claude-haiku-4-5-20251001"
 
     # OpenAI — used only for embeddings (text-embedding-3-small)
     OPENAI_API_KEY: str = ""
-    
-     # Supabase connection
+
+    # Supabase connection
     SUPABASE_URL: str = ""
     SUPABASE_SERVICE_KEY: str = ""
 
