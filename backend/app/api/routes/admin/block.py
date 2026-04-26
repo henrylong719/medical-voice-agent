@@ -1,12 +1,18 @@
 """Admin routes for managing doctor blocks (time off)."""
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 
 from app.supabase_client import supabase
 from app.models.block import BlockIn
 
+from app.api.deps import require_superuser
 
-router = APIRouter(prefix="/blocks", tags=["blocks"])
+
+router = APIRouter(
+    prefix="/blocks",
+    tags=["blocks"],
+    dependencies=[Depends(require_superuser)],
+)
 
 
 @router.get("")

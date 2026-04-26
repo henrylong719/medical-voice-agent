@@ -1,13 +1,17 @@
 """Admin routes for managing specialties."""
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
 from app.supabase_client import supabase
 from app.models.specialty import SpecialtyOut
+from medical_voice_agent.backend.app.api.deps import get_current_user
 
 
-router = APIRouter(prefix="/specialties", tags=["specialties"])
-
+router = APIRouter(
+    prefix="/specialties",
+    tags=["specialties"],
+    dependencies=[Depends(get_current_user)],
+)
 
 @router.get("", response_model=list[SpecialtyOut])
 def list_specialties():

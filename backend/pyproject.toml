@@ -6,7 +6,7 @@ requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.115",
     "uvicorn[standard]>=0.34",
-    "pydantic>=2.0",
+    "pydantic[email]>=2.0",
     "pydantic-settings>=2.0",
     "supabase>=2.0",
     "python-dotenv>=1.0",
@@ -21,6 +21,8 @@ dependencies = [
     "ruff>=0.15.11",
     # Phase 6: Voice pipeline
     "websockets>=15.0",
+    "pyjwt>=2.12.1",
+    "pwdlib>=0.3.0",
 ]
 
 [dependency-groups]

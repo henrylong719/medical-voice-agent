@@ -1,12 +1,17 @@
 """Admin routes for managing patients."""
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
 from app.models.patient import PatientIdentifierIn, PatientIn, PatientSearchIn
 from app.supabase_client import supabase
+from app.api.deps import require_superuser
 
 
-router = APIRouter(prefix="/patients", tags=["patients"])
+router = APIRouter(
+    prefix="/patients",
+    tags=["patients"],
+    dependencies=[Depends(require_superuser)],
+)
 
 
 @router.get("")
