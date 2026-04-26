@@ -12,7 +12,7 @@ from tests.support import FakeQuery, FakeSupabase
 
 
 def test_get_openai_api_key_requires_configuration(monkeypatch: MonkeyPatch) -> None:
-    monkeypatch.setattr(rag_retriever.settings, "openai_api_key", "", raising=False)
+    monkeypatch.setattr(rag_retriever.settings, "OPENAI_API_KEY", "", raising=False)
 
     with pytest.raises(RuntimeError, match="OPENAI_API_KEY is not configured"):
         rag_retriever._get_openai_api_key()
@@ -43,7 +43,7 @@ def test_embed_texts_sorts_embeddings_by_index(monkeypatch: MonkeyPatch) -> None
         )
 
     monkeypatch.setattr(
-        rag_retriever.settings, "openai_api_key", "test-key", raising=False
+        rag_retriever.settings, "OPENAI_API_KEY", "test-key", raising=False
     )
     monkeypatch.setattr(rag_retriever.httpx, "post", fake_post)
 
@@ -61,7 +61,7 @@ def test_embed_texts_sorts_embeddings_by_index(monkeypatch: MonkeyPatch) -> None
 
 def test_embed_texts_raises_on_http_error(monkeypatch: MonkeyPatch) -> None:
     monkeypatch.setattr(
-        rag_retriever.settings, "openai_api_key", "test-key", raising=False
+        rag_retriever.settings, "OPENAI_API_KEY", "test-key", raising=False
     )
     monkeypatch.setattr(
         rag_retriever.httpx,

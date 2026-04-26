@@ -55,7 +55,7 @@ from app.agent.tools import (
     triage_symptoms,
 )
 from app.agent.voice_prompt import VOICE_SYSTEM_PROMPT
-from app.config import settings
+from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -114,7 +114,7 @@ async def _get_checkpointer() -> AsyncPostgresSaver:
 
     running_loop = asyncio.get_running_loop()
 
-    db_uri = settings.supabase_db_uri.strip()
+    db_uri = settings.SUPABASE_DB_URI.strip()
     if not db_uri:
         raise AgentConfigurationError(
             "SUPABASE_DB_URI is not configured. Set it in backend/.env before "
@@ -187,8 +187,8 @@ _graph_loop: asyncio.AbstractEventLoop | None = None
 def _build_llm() -> ChatAnthropic:
     """Build the Claude LLM instance."""
     return ChatAnthropic(
-        model_name=settings.anthropic_model,
-        api_key=SecretStr(settings.anthropic_api_key),
+        model_name=settings.ANTHROPIC_MODEL,
+        api_key=SecretStr(settings.ANTHROPIC_API_KEY),
         temperature=0,
         max_tokens_to_sample=1024,
         timeout=None,
@@ -206,7 +206,7 @@ async def _get_or_build_graph() -> Any:
         await cleanup_checkpointer()
 
     if _graph is None:
-        api_key = settings.anthropic_api_key.strip()
+        api_key = settings.ANTHROPIC_API_KEY.strip()
         if not api_key:
             raise AgentConfigurationError(
                 "ANTHROPIC_API_KEY is not configured. Set it in backend/.env "

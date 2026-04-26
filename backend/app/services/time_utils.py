@@ -20,7 +20,7 @@ from datetime import date, datetime, time, timedelta, timezone
 from typing import Literal
 from zoneinfo import ZoneInfo
 
-from app.config import settings
+from app.core.config import settings
 
 # ============================================================
 # TYPES & CONSTANTS
@@ -28,7 +28,7 @@ from app.config import settings
 
 Bucket = Literal["morning", "afternoon", "any"]
 
-CLINIC_TZ = ZoneInfo(settings.timezone)
+CLINIC_TZ = ZoneInfo(settings.TIMEZONE)
 
 BUCKETS: dict[Bucket, tuple[time, time]] = {
     "morning": (time(8, 0), time(12, 0)),

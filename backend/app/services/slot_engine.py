@@ -18,7 +18,7 @@ from datetime import datetime, time, timedelta, timezone
 import re
 from typing import cast
 
-from app.config import settings
+from app.core.config import settings
 from app.supabase_client import supabase
 from app.models.slot import SlotDict
 from app.models.db_rows import (
@@ -317,7 +317,7 @@ def validate_slot_selection(
         )
 
     now = now_utc()
-    horizon = now + timedelta(days=settings.scheduling_horizon_days)
+    horizon = now + timedelta(days=settings.SCHEDULING_HORIZON_DAYS)
     if requested_start <= now or requested_end > horizon:
         return (
             "That appointment time is no longer bookable. Please choose another slot."
@@ -409,7 +409,7 @@ def _compute_available_slots(
     4. Subtract booked appointments and blocks
     """
     now = now_utc()
-    horizon = now + timedelta(days=settings.scheduling_horizon_days)
+    horizon = now + timedelta(days=settings.SCHEDULING_HORIZON_DAYS)
     bucket = parse_time_bucket(preferred_time)
 
     # Determine search window

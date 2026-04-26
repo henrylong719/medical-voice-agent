@@ -13,7 +13,7 @@ from postgrest.constants import DEFAULT_POSTGREST_CLIENT_TIMEOUT
 from supabase import create_client, Client
 from supabase.lib.client_options import SyncClientOptions
 
-from app.config import settings
+from app.core.config import settings
 
 
 def _build_http_client() -> HttpxClient:
@@ -29,8 +29,8 @@ def _create_supabase_client() -> Client:
     """Create and return a Supabase client instance."""
     options = SyncClientOptions(httpx_client=_build_http_client())
     return create_client(
-        supabase_url=settings.supabase_url,
-        supabase_key=settings.supabase_service_key,
+        supabase_url=settings.SUPABASE_URL,
+        supabase_key=settings.SUPABASE_SERVICE_KEY,
         options=options,
     )
 

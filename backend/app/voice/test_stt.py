@@ -32,7 +32,7 @@ import wave
 from pathlib import Path
 from typing import AsyncIterator
 
-from app.config import settings
+from medical_voice_agent.backend.app.core.config import settings
 from app.voice.stt_client import STTClient, SAMPLE_RATE
 
 
@@ -141,7 +141,7 @@ async def main(audio_path: str, is_raw: bool = False) -> None:
         sys.exit(1)
 
     # Validate API key
-    api_key = settings.assemblyai_api_key.strip()
+    api_key = settings.ASSEMBLYAI_API_KEY.strip()
     if not api_key:
         print("Error: ASSEMBLYAI_API_KEY not set in backend/.env")
         print("Get a free key at https://www.assemblyai.com/dashboard")

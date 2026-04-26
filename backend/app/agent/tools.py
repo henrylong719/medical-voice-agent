@@ -40,7 +40,7 @@ from app.models.db_rows import (
     TriageMatchRow,
     TriageScore,
 )
-from app.config import settings
+from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -1021,7 +1021,7 @@ def reschedule_appointment(
                     "p_new_specialty_id": confirmed_specialty_id,
                     "p_new_start_at": confirmed_start_at,
                     "p_new_end_at": confirmed_end_at,
-                    "p_timezone": settings.timezone,
+                    "p_timezone": settings.TIMEZONE,
                 },
             ).execute()
         except Exception:
