@@ -41,18 +41,18 @@ https://github.com/Agentic-AI-UIUC/Agentic-Medical-Voice-Agent
 
 ## Current Status
 
-The repository is currently in a Phase 4-style state:
+The repository is currently in a Phase 5-style state:
 
 - **Phase 1 foundations are in place:** schema, seed data, admin APIs, scheduling engine, and time utilities.
 - **Phase 2 agent work is in place:** LangGraph agent, tool calling, patient identification, booking, rescheduling, cancellation, and chat endpoints.
 - **Phase 3 hybrid triage work is in place:** pgvector-backed medical knowledge retrieval plus keyword symptom matching.
 - **Phase 4 multi-agent routing is in place:** Supervisor, Intake, Triage, and Scheduling agents.
+- **Phase 5 guardrails are in place:** deterministic input guardrails for emergencies, medical advice requests, prompt injection, and off-topic messages; output guardrails for unsafe medical advice; and LangSmith PII redaction.
 
 ---
 
 ## Upcoming Milestones
 
-- **Phase 5:** Emergency symptoms trigger an immediate escalation response, and the assistant refuses medical advice while staying in scheduling mode.
 - **Phase 6:** A patient can complete an end-to-end appointment workflow entirely by voice through the browser.
 - **Phase 7:** The project has measurable eval coverage for quality and safety, with regression checks for prompt changes.
 - **Phase 8:** The medical tools are available through an MCP server and usable from an MCP-compatible client.
@@ -71,6 +71,9 @@ It can:
 - Fall back to stronger identifiers like MRN, passport number, driver's license number, or clinic patient number if demographics still do not resolve one record.
 - Register new patients with full name, date of birth, and phone number.
 - Match symptoms to specialties with hybrid triage using keyword search over `symptom_specialty_map` plus semantic search over `medical_knowledge`.
+- Intercept red-flag emergencies, medical advice requests, prompt-injection attempts, and off-topic messages before normal agent routing.
+- Sanitize generated responses that contain medical advice before returning them to the patient.
+- Redact patient PII from LangSmith trace payloads.
 - Find open appointment slots across doctors or for a specific doctor.
 - Book, reschedule, and cancel appointments.
 - Stream chat responses over Server-Sent Events.
@@ -89,6 +92,8 @@ User message or future voice input
         ↓
 FastAPI chat endpoint
         ↓
+Input guardrails
+        ↓
 LangGraph Supervisor Agent
         ↓
 Intake Agent / Triage Agent / Scheduling Agent
@@ -98,6 +103,8 @@ Tool calls
 Supabase/PostgreSQL
         ↓
 Patient, doctor, appointment, and triage data
+        ↓
+Output guardrails before the patient sees the response
 ```
 
 The project separates the AI conversation layer from backend business logic.
@@ -231,7 +238,7 @@ Because this project is related to healthcare, the assistant should not treat ev
 
 Some symptoms may require urgent help.
 
-The project is designed to support emergency guardrails before normal triage.
+The project includes deterministic emergency guardrails before normal triage.
 
 Examples of red-flag symptoms include:
 
@@ -537,6 +544,13 @@ uv run python -m pytest tests/test_workflows.py
 
 These tests use an in-memory checkpointer plus scripted sub-agent doubles, so they cover conversation flow and state transitions without calling external LLM APIs.
 
+Run the Phase 5 safety and PII coverage:
+
+```bash
+cd backend
+uv run python -m pytest tests/test_guardrails.py tests/test_adversarial.py tests/test_pii_redactor.py
+```
+
 ---
 
 ## Evaluation Suite
@@ -612,11 +626,10 @@ The docs folder contains both earlier phase notes and the current long-form road
 - [Original project planning prompt](<docs/Medical Voice Agent — Project Instruction Prompt.md>)
 - [Long-form working notes](docs/record.md)
 
-Based on the current implementation, Phases 1 through 4 are in place. The remaining roadmap is:
+Based on the current implementation, Phases 1 through 5 are in place. The remaining roadmap is:
 
 | Phase                                            | Focus                                                        | Duration  | Goal                                                         |
 | ------------------------------------------------ | ------------------------------------------------------------ | --------- | ------------------------------------------------------------ |
-| **5. Guardrails & Medical Safety**               | Safety boundaries, emergency detection, scope control, PII hygiene | 1-2 weeks | Add input/output guardrails so the assistant stays in scheduling scope, catches red-flag symptoms, and handles sensitive data more safely. |
 | **6. Real-Time Voice Pipeline**                  | Streaming STT/TTS, WebSockets, barge-in, spoken UX           | 2-4 weeks | Turn the text-based backend into a realtime voice experience with AssemblyAI STT, Cartesia TTS, and a FastAPI WebSocket pipeline. |
 | **7. Evaluation, Testing & Prompt Optimization** | LangSmith datasets, automated scoring, regression coverage   | 2-3 weeks | Build a repeatable eval system for triage accuracy, safety, end-to-end flows, and prompt iteration. |
 | **8. MCP Integration**                           | MCP server, tools/resources/prompts, stdio + SSE transports  | 1-2 weeks | Expose scheduling and triage capabilities through a standards-compliant MCP server for Claude Desktop and other MCP clients. |
