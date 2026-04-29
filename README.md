@@ -10,7 +10,7 @@ The active implementation lives in [`backend/`](backend/). The planning history 
 
 ## Motivation
 
-This project was created as a personal follow-up to a related end-to-end Medical Voice Agent project that I developed with a team at the University of Illinois.
+This project was created as a personal follow-up to a related end-to-end Medical Voice Agent project that I developed with a team at the University of Illinois Urbana-Champaign.
 
 The original project focuses on a phone-call AI assistant for a university health center appointment-booking use case. It uses **Vapi AI** for the voice layer, including speech-to-text, text-to-speech, LLM-driven conversations, and tool calling. It also includes a **FastAPI backend**, a **Next.js staff dashboard**, and **Supabase/PostgreSQL** for storing patients, appointments, call logs, and transcripts.
 
