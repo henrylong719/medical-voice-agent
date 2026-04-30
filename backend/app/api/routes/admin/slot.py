@@ -1,11 +1,17 @@
 """Admin routes for finding available appointment slots."""
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 
 from app.services.slot_engine import find_slots_for_specialty, find_slots_for_doctor
+from app.api.deps import require_superuser
 
 
-router = APIRouter(prefix="/slots", tags=["slots"])
+router = APIRouter(
+    prefix="/slots",
+    tags=["slots"],
+    dependencies=[Depends(require_superuser)],
+)
+
 
 
 @router.get("/by-specialty")

@@ -1,26 +1,28 @@
 """
-Multi-agent medical scheduling graph built with LangGraph.
+Single voice-optimized agent for medical scheduling.
 
-Replaces the Phase 2 monolithic agent with a Supervisor + 3 sub-agents:
-  - Supervisor: routes to the right sub-agent based on state
-  - Intake Agent: identifies or registers patients
-  - Triage Agent: collects symptoms, matches to specialty via RAG
-  - Scheduling Agent: books, reschedules, cancels appointments
+Replaces the Phase 4 multi-agent graph (supervisor + 3 sub-agents)
+with a single agent that has all 10 tools and a consolidated
+voice-optimized system prompt. This simplification lets us focus
+on voice pipeline development without debugging orchestration
+edge cases.
 
-The graph loop:
-  Patient message → Supervisor → Sub-agent → Supervisor → ...
-  When waiting for patient input, the graph exits to END.
+Architecture:
+    Patient message → screen_input() → Agent (all tools) → sanitize_output() → Response
 
-Graph structure:
-    START → supervisor ←→ intake
-                       ←→ triage
-                       ←→ scheduling
-                       → END (when waiting for patient)
+The public API is identical to the multi-agent version:
+    - stream_agent_response(message, thread_id) → AsyncIterator[str]
+    - invoke_agent(message, thread_id) → str
+    - ensure_agent_ready() → None
+    - cleanup_checkpointer() → None
 
-Persistence is handled by AsyncPostgresSaver on the outer graph,
-so conversation state survives across messages and server restarts.
-The sub-agents do NOT have their own checkpointers — they read from
-and write to the shared AgentState.
+chat/routes.py and the future voice pipeline call these functions
+without knowing which agent architecture is behind the wall.
+
+Swap-back plan:
+    To restore the multi-agent system, revert this file and move
+    screen_input() back into the supervisor node. Everything else
+    (tools, services, guardrails) is unchanged.
 """
 
 from __future__ import annotations
@@ -31,17 +33,29 @@ from contextlib import AsyncExitStack
 from typing import Any, AsyncIterator
 from urllib.parse import quote, urlparse, urlunparse
 
+from langchain.agents import create_agent
+from langchain_anthropic import ChatAnthropic
 from langchain_core.messages import AIMessage
-from langgraph.graph import END, START, StateGraph
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from psycopg import AsyncConnection
 from psycopg.rows import dict_row
+from pydantic import SecretStr
 
-from app.agent.agents import intake_node, triage_node, scheduling_node
-from app.agent.guardrails import check_output, sanitize_output
-from app.agent.state import AgentState
-from app.agent.supervisor import supervisor_node
-from app.config import settings
+from app.agent.guardrails import check_output, sanitize_output, screen_input
+from app.agent.tools import (
+    book_appointment,
+    cancel_appointment,
+    find_appointment,
+    find_patient_by_identifier,
+    find_patients_by_demographics,
+    find_slots,
+    list_specialties,
+    register_patient,
+    reschedule_appointment,
+    triage_symptoms,
+)
+from app.agent.voice_prompt import VOICE_SYSTEM_PROMPT
+from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -51,12 +65,30 @@ class AgentConfigurationError(RuntimeError):
 
 
 # ============================================================
+# ALL TOOLS — same 10 tools the sub-agents used, now on one agent
+# ============================================================
+
+ALL_TOOLS = [
+    find_patient_by_identifier,
+    find_patients_by_demographics,
+    register_patient,
+    triage_symptoms,
+    find_slots,
+    book_appointment,
+    find_appointment,
+    reschedule_appointment,
+    cancel_appointment,
+    list_specialties,
+]
+
+
+# ============================================================
 # CHECKPOINTER (persistent conversation memory)
 # ============================================================
-# Same pattern as Phase 2 — AsyncPostgresSaver stores conversation
-# state in Supabase Postgres. Now it wraps the OUTER graph, not a
-# single agent. Sub-agents don't need their own checkpointers
-# because they read/write through the shared AgentState.
+# Identical to the multi-agent version. AsyncPostgresSaver stores
+# conversation state in Supabase Postgres. The single agent uses
+# the same checkpointer — conversation history survives across
+# messages and server restarts.
 # ============================================================
 
 _checkpointer: AsyncPostgresSaver | None = None
@@ -82,7 +114,7 @@ async def _get_checkpointer() -> AsyncPostgresSaver:
 
     running_loop = asyncio.get_running_loop()
 
-    db_uri = settings.supabase_db_uri.strip()
+    db_uri = settings.SUPABASE_DB_URI.strip()
     if not db_uri:
         raise AgentConfigurationError(
             "SUPABASE_DB_URI is not configured. Set it in backend/.env before "
@@ -140,95 +172,32 @@ async def cleanup_checkpointer() -> None:
 
 
 # ============================================================
-# GRAPH CONSTRUCTION
+# AGENT CONSTRUCTION
 # ============================================================
-
-
-def _route_from_supervisor(state: AgentState) -> str:
-    """Conditional edge: read current_agent to decide the next node.
-
-    Called after the Supervisor runs. The Supervisor sets current_agent
-    to tell the graph where to go:
-      - "intake" / "triage" / "scheduling" → route to that sub-agent
-      - "supervisor" → Supervisor wants to re-run itself (e.g., after
-        classifying intent, it needs to re-evaluate routing rules)
-      - "done" or anything else → the Supervisor responded directly
-        to the patient (e.g., asked a clarifying question), so we go
-        to END and wait for the next message
-    """
-    next_agent = state.get("current_agent", "")
-
-    if next_agent in ("intake", "triage", "scheduling", "supervisor"):
-        return next_agent
-
-    # Supervisor added a message for the patient — wait for reply
-    return END
-
-
-def _build_graph() -> StateGraph:
-    """Construct the multi-agent state graph.
-
-    Nodes:
-      - supervisor: inspects state, routes to sub-agents or END
-      - intake: identifies / registers patients
-      - triage: collects symptoms, matches to specialty
-      - scheduling: books / reschedules / cancels appointments
-
-    Edges:
-      - START → supervisor (entry point for every message)
-      - supervisor → intake / triage / scheduling (conditional)
-      - supervisor → supervisor (re-run after intent classification)
-      - supervisor → END (waiting for patient input)
-      - intake / triage / scheduling → supervisor (always return)
-    """
-    graph = StateGraph(AgentState)
-
-    # ── Register nodes ───────────────────────────────────
-    graph.add_node("supervisor", supervisor_node)
-    graph.add_node("intake", intake_node)
-    graph.add_node("triage", triage_node)
-    graph.add_node("scheduling", scheduling_node)
-
-    # ── Entry point ──────────────────────────────────────
-    # Every patient message enters through the Supervisor
-    graph.add_edge(START, "supervisor")
-
-    # ── Supervisor routing (conditional edges) ───────────
-    # After the Supervisor runs, _route_from_supervisor
-    # reads current_agent to decide where to go next.
-    graph.add_conditional_edges(
-        "supervisor",
-        _route_from_supervisor,
-        {
-            "intake": "intake",
-            "triage": "triage",
-            "scheduling": "scheduling",
-            "supervisor": "supervisor",
-            END: END,
-        },
-    )
-
-    # ── Sub-agent → Supervisor (fixed edges) ─────────────
-    # After any sub-agent finishes, always return to
-    # Supervisor. It re-evaluates state and decides what's
-    # next — route to another agent, or go to END.
-    graph.add_edge("intake", "supervisor")
-    graph.add_edge("triage", "supervisor")
-    graph.add_edge("scheduling", "supervisor")
-
-    return graph
-
-
-# ============================================================
-# COMPILED GRAPH (with checkpointer)
+# Instead of a StateGraph with 4 nodes and conditional edges,
+# we use create_agent directly. It builds its own internal graph
+# with the observe → think → act loop. We just give it the LLM,
+# tools, and system prompt.
 # ============================================================
 
 _graph: Any | None = None
 _graph_loop: asyncio.AbstractEventLoop | None = None
 
 
+def _build_llm() -> ChatAnthropic:
+    """Build the Claude LLM instance."""
+    return ChatAnthropic(
+        model_name=settings.ANTHROPIC_MODEL,
+        api_key=SecretStr(settings.ANTHROPIC_API_KEY),
+        temperature=0,
+        max_tokens_to_sample=1024,
+        timeout=None,
+        stop=None,
+    )
+
+
 async def _get_or_build_graph() -> Any:
-    """Lazy singleton: build and compile the graph on first request."""
+    """Lazy singleton: build and compile the agent on first request."""
     global _graph, _graph_loop
 
     running_loop = asyncio.get_running_loop()
@@ -237,7 +206,7 @@ async def _get_or_build_graph() -> Any:
         await cleanup_checkpointer()
 
     if _graph is None:
-        api_key = settings.anthropic_api_key.strip()
+        api_key = settings.ANTHROPIC_API_KEY.strip()
         if not api_key:
             raise AgentConfigurationError(
                 "ANTHROPIC_API_KEY is not configured. Set it in backend/.env "
@@ -245,16 +214,26 @@ async def _get_or_build_graph() -> Any:
             )
 
         checkpointer = await _get_checkpointer()
-        graph = _build_graph()
-        _graph = graph.compile(checkpointer=checkpointer)
+
+        # Build the single agent with all tools and the voice prompt.
+        # create_agent returns a CompiledStateGraph — it already
+        # includes the observe → think → act loop internally.
+        # We pass the checkpointer directly so conversation history
+        # persists across messages and server restarts.
+        _graph = create_agent(
+            model=_build_llm(),
+            tools=ALL_TOOLS,
+            system_prompt=VOICE_SYSTEM_PROMPT,
+            checkpointer=checkpointer,
+        )
         _graph_loop = running_loop
-        logger.info("Multi-agent graph compiled")
+        logger.info("Single voice agent compiled")
 
     return _graph
 
 
 async def ensure_agent_ready() -> None:
-    """Eagerly validate configuration and initialize the graph singleton."""
+    """Eagerly validate configuration and initialize the agent singleton."""
     await _get_or_build_graph()
 
 
@@ -293,9 +272,13 @@ def _extract_text_content(content: Any) -> str:
 # ============================================================
 # PUBLIC API
 # ============================================================
-# These functions are the interface that chat/routes.py calls.
-# The signatures are identical to Phase 2 — the multi-agent
-# complexity is entirely hidden behind the same API.
+# Same signatures as the multi-agent version. chat/routes.py
+# and the future voice pipeline call these without changes.
+#
+# Key difference from multi-agent: screen_input() now runs HERE
+# instead of inside the supervisor node. This is the boundary
+# layer — every message passes through these functions, so
+# guardrails are guaranteed to run on every turn.
 # ============================================================
 
 
@@ -303,7 +286,7 @@ async def stream_agent_response(
     message: str,
     thread_id: str,
 ) -> AsyncIterator[str]:
-    """Send a message to the multi-agent graph and stream the response.
+    """Send a message to the agent and stream the response.
 
     Args:
         message: The patient's message text.
@@ -311,14 +294,26 @@ async def stream_agent_response(
             conversation history (persisted via checkpointer).
 
     Yields:
-        Text chunks as they're generated by whichever agent responds.
+        Text chunks as they're generated by the agent.
 
-    After streaming completes, runs output guardrails on the full
-    response text. Violations are logged as warnings for prompt
-    improvement — we can't un-stream tokens already sent.
-    In Phase 6 (voice), the TTS buffering step will allow real-time
-    interception before audio is synthesized.
+    Guardrails:
+        - Input: screen_input() runs before the agent. If triggered,
+          yields the guardrail response and returns immediately.
+        - Output: after streaming completes, scans the full response
+          for medical advice violations. Can't un-stream tokens, but
+          logs violations for monitoring and prompt improvement.
     """
+    # ── Input guardrail: intercept before the agent sees it ──
+    guardrail_result = screen_input(message)
+    if guardrail_result is not None:
+        logger.warning(
+            "Input guardrail triggered (%s) for thread %s — short-circuiting",
+            guardrail_result.category,
+            thread_id,
+        )
+        yield guardrail_result.response
+        return
+
     graph = await _get_or_build_graph()
     config = {"configurable": {"thread_id": thread_id}}
     input_message = {"messages": [("human", message)]}
@@ -345,10 +340,6 @@ async def stream_agent_response(
             yield text
 
     # ── Post-stream output guardrail ──────────────────────
-    # Scan the full response for medical advice violations.
-    # We can't rewrite what was already streamed, but we log
-    # violations so they surface in monitoring and drive
-    # prompt improvements.
     full_response = "".join(streamed_chunks)
     if full_response:
         violations = check_output(full_response)
@@ -366,22 +357,32 @@ async def invoke_agent(message: str, thread_id: str) -> str:
     """Send a message and get the complete response (non-streaming).
 
     Useful for testing and for contexts where streaming isn't needed.
+
+    Guardrails:
+        - Input: screen_input() runs before the agent. If triggered,
+          returns the guardrail response immediately.
+        - Output: scans the full response and rewrites it if medical
+          advice violations are found.
     """
+    # ── Input guardrail: intercept before the agent sees it ──
+    guardrail_result = screen_input(message)
+    if guardrail_result is not None:
+        logger.warning(
+            "Input guardrail triggered (%s) for thread %s — short-circuiting",
+            guardrail_result.category,
+            thread_id,
+        )
+        return guardrail_result.response
+
     graph = await _get_or_build_graph()
     config = {"configurable": {"thread_id": thread_id}}
     input_message = {"messages": [("human", message)]}
 
     result = await graph.ainvoke(input_message, config=config)
 
-    # Count how many messages were in state before this invocation.
-    # The input adds 1 human message, so new agent messages start
-    # after that. We look at the full result and collect only the
-    # patient-facing AI messages added during THIS turn.
-    #
-    # We find the input human message by ID and collect everything after it.
+    # Find the last human message and collect all AI responses after it.
     messages = result.get("messages", [])
 
-    # Find where the new human message is — everything after it is new
     new_start = 0
     for i, msg in enumerate(messages):
         if hasattr(msg, "type") and msg.type == "human":
@@ -397,7 +398,5 @@ async def invoke_agent(message: str, thread_id: str) -> str:
 
     full_response = "\n\n".join(responses)
 
-    # ── Output guardrail: scan for medical advice ─────────
-    # We have the complete response, so we can rewrite it
-    # before the patient sees it.
+    # ── Output guardrail: scan and rewrite if needed ──────
     return sanitize_output(full_response)

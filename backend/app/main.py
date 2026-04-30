@@ -19,7 +19,11 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.config import settings
+from app.api.main import api_router
+
+from app.core.config import settings
+
+from app.agent.graph import cleanup_checkpointer
 
 # ── LangSmith environment setup ──────────────────────────────
 # LangSmith's SDK reads config from environment variables, not
@@ -32,10 +36,10 @@ from app.config import settings
 # LangChain's auto-tracing calls get_cached_client() internally,
 # and since it's already initialized with our anonymizer, all
 # traces will have PII masked automatically.
-if settings.langsmith_api_key:
-    os.environ.setdefault("LANGSMITH_API_KEY", settings.langsmith_api_key)
-    os.environ.setdefault("LANGSMITH_TRACING", settings.langsmith_tracing)
-    os.environ.setdefault("LANGSMITH_PROJECT", settings.langsmith_project)
+if settings.LANGSMITH_API_KEY:
+    os.environ.setdefault("LANGSMITH_API_KEY", settings.LANGSMITH_API_KEY)
+    os.environ.setdefault("LANGSMITH_TRACING", settings.LANGSMITH_TRACING)
+    os.environ.setdefault("LANGSMITH_PROJECT", settings.LANGSMITH_PROJECT)
 
     from langsmith.run_trees import get_cached_client
     from app.agent.pii_redactor import redact_pii
@@ -47,15 +51,6 @@ if settings.langsmith_api_key:
     logging.getLogger(__name__).info(
         "LangSmith PII redaction enabled — patient data will be masked in traces"
     )
-
-from app.api.admin.specialty_routes import router as specialty_router
-from app.api.admin.doctor_routes import router as doctor_router
-from app.api.admin.patient_routes import router as patient_router
-from app.api.admin.appointment_routes import router as appointment_router
-from app.api.admin.block_routes import router as block_router
-from app.api.admin.slot_routes import router as slot_router
-from app.api.chat.routes import router as chat_router
-from app.agent.graph import cleanup_checkpointer
 
 
 @asynccontextmanager
@@ -83,24 +78,14 @@ app = FastAPI(
 # In production, you'd restrict origins to your actual domain.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # allow all origins during development
+    allow_origins=settings.all_cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 
-# Mount admin route groups — each domain gets its own prefix
-API_PREFIX = "/api/v1/admin"
-app.include_router(specialty_router, prefix=API_PREFIX)
-app.include_router(doctor_router, prefix=API_PREFIX)
-app.include_router(patient_router, prefix=API_PREFIX)
-app.include_router(appointment_router, prefix=API_PREFIX)
-app.include_router(block_router, prefix=API_PREFIX)
-app.include_router(slot_router, prefix=API_PREFIX)
-
-# Mount chat routes — the agent-facing API
-app.include_router(chat_router, prefix="/api/v1")
+app.include_router(api_router, prefix=settings.API_V1_STR)
 
 
 @app.get("/health")

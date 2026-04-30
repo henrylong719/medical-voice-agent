@@ -26,7 +26,7 @@ from typing import cast
 
 from postgrest.types import CountMethod
 
-from app.config import settings
+from medical_voice_agent.backend.app.core.config import settings
 from app.supabase_client import supabase
 from app.services.knowledge_chunks import KNOWLEDGE_CHUNKS
 from app.services.rag_retriever import embed_texts
@@ -39,7 +39,7 @@ from app.services.rag_retriever import embed_texts
 
 def _get_openai_api_key() -> str:
     """Validate that the OpenAI API key is configured."""
-    key = settings.openai_api_key.strip()
+    key = settings.OPENAI_API_KEY.strip()
     if not key:
         print(
             "ERROR: OPENAI_API_KEY not found in backend/.env\n"

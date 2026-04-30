@@ -1,12 +1,17 @@
 """Admin routes for managing appointments."""
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
 from app.supabase_client import supabase
 
+from app.api.deps import require_superuser
 
-router = APIRouter(prefix="/appointments", tags=["appointments"])
 
+router = APIRouter(
+    prefix="/appointments",
+    tags=["appointments"],
+    dependencies=[Depends(require_superuser)],
+)
 
 @router.get("")
 def list_appointment(

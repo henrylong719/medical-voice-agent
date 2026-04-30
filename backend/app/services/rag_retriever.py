@@ -22,7 +22,7 @@ from typing import Any, TypedDict, cast
 
 import httpx
 
-from app.config import settings
+from app.core.config import settings
 from app.supabase_client import supabase
 
 
@@ -66,7 +66,7 @@ class RetrievedChunk(TypedDict):
 
 def _get_openai_api_key() -> str:
     """Read and validate the OpenAI API key from settings."""
-    api_key = settings.openai_api_key.strip()
+    api_key = settings.OPENAI_API_KEY.strip()
     if not api_key:
         raise RuntimeError("OPENAI_API_KEY is not configured. Set it in backend/.env.")
     return api_key

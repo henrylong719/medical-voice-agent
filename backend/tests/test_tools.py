@@ -1120,7 +1120,7 @@ def test_reschedule_appointment_finalizes_confirmed_slot(
                 "p_new_specialty_id": "spec-cardio",
                 "p_new_start_at": "2026-04-20T14:00:00+00:00",
                 "p_new_end_at": "2026-04-20T14:30:00+00:00",
-                "p_timezone": tools.settings.timezone,
+                "p_timezone": tools.settings.TIMEZONE,
             },
         )
     ]

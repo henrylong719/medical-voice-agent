@@ -67,6 +67,7 @@ SPEECH_MODEL = "u3-rt-pro"
 # The rest of the pipeline never touches raw JSON — it works with these.
 # ============================================================
 
+
 @dataclass(frozen=True, slots=True)
 class TranscriptEvent:
     """A single transcript event from AssemblyAI.
@@ -85,17 +86,18 @@ class TranscriptEvent:
             within a turn. Fires faster than end_of_turn — could be
             used for preemptive LLM generation in the future.
     """
-    
+
     text: str
     is_final: bool
     turn_order: int = 0
     confidence: float = 0.0
-    utterance: str = ""  
-    
-    
+    utterance: str = ""
+
+
 # ============================================================
 # STT CLIENT
 # ============================================================
+
 
 class STTClient:
     """Async streaming Speech-to-Text client for AssemblyAI v3.
@@ -111,12 +113,11 @@ class STTClient:
         sample_rate: Audio sample rate in Hz. Must match the audio
             source. Default 16000 (standard for speech).
     """
-    
+
     def __init__(self, api_key: str, sample_rate: int = SAMPLE_RATE) -> None:
         self._api_key = api_key
         self._sample_rate = sample_rate
-        
-    
+
     def _build_url(self) -> str:
         """Build the v3 WebSocket URL with query parameters."""
         params = {
@@ -124,7 +125,7 @@ class STTClient:
             "sample_rate": self._sample_rate,
         }
         return f"{AAI_WSS_BASE}?{urlencode(params)}"
-    
+
     async def transcribe(
         self,
         audio_source: AsyncIterator[bytes],
@@ -153,48 +154,45 @@ class STTClient:
         """
         url = self._build_url()
         headers = {"Authorization": self._api_key}
-        
+
         logger.info("Connecting to AssemblyAI STT at %s", AAI_WSS_BASE)
-        
-        
+
         # ── Open the WebSocket connection ──────────────────────
         # `websockets.connect` returns an async context manager that
         # handles the handshake and cleanup. We pass extra_headers
         # for auth (AssemblyAI uses a plain Authorization header,
-        # not Bearer token).    
+        # not Bearer token).
         async with websockets.connect(
             url,
-               additional_headers=headers,
-               # Ping/pong keepalive — prevents proxies and load balancers
+            additional_headers=headers,
+            # Ping/pong keepalive — prevents proxies and load balancers
             # from closing idle connections. AssemblyAI sessions can last
             # up to 3 hours, so we need this for long conversations.
             ping_interval=20,
-            ping_timeout=10
+            ping_timeout=10,
         ) as ws:
             # ── Wait for the Begin message ─────────────────────
             # The first message from AssemblyAI is always a Begin
             # event with the session ID. We log it but don't yield it.
             begin_raw = await ws.recv()
             begin_data = json.loads(begin_raw)
-            
+
             if begin_data.get("type") != "Begin":
                 logger.error(
                     "Expected 'Begin' message, got: %s", begin_data.get("type")
                 )
                 return
-            
+
             session_id = begin_data.get("id", "unknown")
             logger.info("AssenblyAI session started: %s", session_id)
-            
-             # ── Start sending audio in the background ──────────
+
+            # ── Start sending audio in the background ──────────
             # We need to send audio AND receive transcripts at the
             # same time — that's the whole point of WebSocket being
             # bidirectional. asyncio.create_task lets us do both
             # concurrently within a single async function.
-            send_task = asyncio.create_task(
-                self._send_audio(ws, audio_source)
-            )
-            
+            send_task = asyncio.create_task(self._send_audio(ws, audio_source))
+
             try:
                 # ── Receive transcript events ──────────────────
                 # Loop until the WebSocket closes or we get a
@@ -203,16 +201,16 @@ class STTClient:
                 async for message in ws:
                     data = json.loads(message)
                     msg_type = data.get("type")
-                    
+
                     if msg_type == "Turn":
                         event = TranscriptEvent(
-                            text=data.get("transcript",""),
-                            is_final=data.get("end_of_turn",False),
+                            text=data.get("transcript", ""),
+                            is_final=data.get("end_of_turn", False),
                             turn_order=data.get("turn_order", 0),
                             confidence=data.get("end_of_turn_confidence", 0.0),
-                            utterance=data.get("utterance","")
-                        )	
-                        
+                            utterance=data.get("utterance", ""),
+                        )
+
                         # Only yield events that have text content.
                         # AssemblyAI sends Turn messages even when
                         # transcript is empty (start of a new turn
@@ -233,7 +231,7 @@ class STTClient:
                         logger.error("AssemblyAI error: %s", error_msg)
                         break
             finally:
-                 # ── Cleanup ────────────────────────────────────
+                # ── Cleanup ────────────────────────────────────
                 # Cancel the send task if it's still running (e.g.,
                 # if we broke out of the receive loop due to an error
                 # while audio was still streaming).
@@ -243,14 +241,14 @@ class STTClient:
                         await send_task
                     except asyncio.CancelledError:
                         pass
-                    
+
                     logger.info("STT client disconnected")
-        
+
     async def _send_audio(
-            self,
-            ws: ClientConnection,
-            audio_source: AsyncIterator[bytes],
-        ) -> None:
+        self,
+        ws: ClientConnection,
+        audio_source: AsyncIterator[bytes],
+    ) -> None:
         """Background task: read audio chunks and send to AssemblyAI.
 
         Runs concurrently with the receive loop in transcribe().
@@ -264,49 +262,27 @@ class STTClient:
         """
         try:
             async for chunk in audio_source:
-                   # Send raw PCM bytes directly as a binary WebSocket frame.
+                # Send raw PCM bytes directly as a binary WebSocket frame.
                 # This is more efficient than base64-encoding into JSON
                 # (which the v2 API required). Each chunk is typically
                 # 50ms of audio = 1,600 bytes at 16kHz/16bit/mono.
                 await ws.send(chunk)
-             
+
             # Audio source exhausted — tell AssemblyAI to wrap up.
             # It will flush any buffered transcript and send a
             # Termination response, which our receive loop catches.
             logger.info("Audio source ended: sending Terminate")
             await ws.send(json.dumps({"type": "Terminate"}))
-        
+
         except asyncio.CancelledError:
             try:
-                 await ws.send(json.dumps({"type": "Terminate"}))
+                await ws.send(json.dumps({"type": "Terminate"}))
             except Exception:
-                pass # Connection might already be closed
+                pass  # Connection might already be closed
             raise
-        
+
         except websockets.exceptions.ConnectionClosed:
             logger.warning("WebSocket closed while sending audio")
-        
+
         except Exception:
             logger.exception("Unexpected error in audio send loop")
-            
-            
-        
-            
-                
-       
-            
-        
-            
-
-                
-
-                    
-                
-            
-            
-                
-            
-            
-
-
-        

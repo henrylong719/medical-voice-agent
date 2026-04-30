@@ -2,14 +2,19 @@
 
 from turtle import reset
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
 from app.supabase_client import supabase
 from app.models.doctor import DoctorCreateIn
+from app.api.deps import require_superuser
 
 
-router = APIRouter(prefix="/doctors", tags=["doctors"])
 
+router = APIRouter(
+    prefix="/doctors",
+    tags=["doctors"],
+    dependencies=[Depends(require_superuser)],
+)
 
 @router.get("")
 def list_doctors(specialty_id: str | None = None):

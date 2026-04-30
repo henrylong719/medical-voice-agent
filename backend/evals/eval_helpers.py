@@ -22,7 +22,7 @@ from langchain_anthropic import ChatAnthropic
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from pydantic import SecretStr
 
-from app.config import settings
+from medical_voice_agent.backend.app.core.config import settings
 from app.agent.graph import invoke_agent
 from app.supabase_client import supabase
 
@@ -45,16 +45,19 @@ class SeededPatient:
 
 def build_eval_llm(*, model: str, max_tokens: int) -> ChatAnthropic:
     """Build an eval LLM using the app's configured Anthropic key."""
-    api_key = settings.anthropic_api_key.strip()
+    api_key = settings.ANTHROPIC_API_KEY.strip()
     if not api_key:
         raise RuntimeError(
             "ANTHROPIC_API_KEY is not configured in backend/.env, so evals cannot run."
         )
 
     return ChatAnthropic(
-        model=model,
-        api_key=SecretStr(api_key),
-        max_tokens=max_tokens,
+        model_name=settings.ANTHROPIC_MODEL,
+        api_key=SecretStr(settings.ANTHROPIC_API_KEY),
+        temperature=0,
+        max_tokens_to_sample=1024,
+        timeout=None,
+        stop=None,
     )
 
 

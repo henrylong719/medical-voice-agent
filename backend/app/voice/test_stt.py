@@ -32,7 +32,7 @@ import wave
 from pathlib import Path
 from typing import AsyncIterator
 
-from app.config import settings
+from medical_voice_agent.backend.app.core.config import settings
 from app.voice.stt_client import STTClient, SAMPLE_RATE
 
 
@@ -77,20 +77,15 @@ def read_wav_as_pcm(path: Path) -> bytes:
             print("  Converting stereo to mono...")
             samples = struct.unpack(f"<{n_frames * 2}h", pcm_data)
             mono_samples = [
-                (samples[i] + samples[i + 1]) // 2
-                for i in range(0, len(samples), 2)
+                (samples[i] + samples[i + 1]) // 2 for i in range(0, len(samples), 2)
             ]
             pcm_data = struct.pack(f"<{len(mono_samples)}h", *mono_samples)
 
         # If sample rate doesn't match, warn (we won't resample here —
         # for testing, just use a file recorded at 16kHz)
         if framerate != SAMPLE_RATE:
-            print(
-                f"  WARNING: File is {framerate}Hz but STT expects {SAMPLE_RATE}Hz."
-            )
-            print(
-                f"  Transcription may be inaccurate. Re-record at {SAMPLE_RATE}Hz."
-            )
+            print(f"  WARNING: File is {framerate}Hz but STT expects {SAMPLE_RATE}Hz.")
+            print(f"  Transcription may be inaccurate. Re-record at {SAMPLE_RATE}Hz.")
             print()
 
         return pcm_data
@@ -141,7 +136,7 @@ async def main(audio_path: str, is_raw: bool = False) -> None:
         sys.exit(1)
 
     # Validate API key
-    api_key = settings.assemblyai_api_key.strip()
+    api_key = settings.ASSEMBLYAI_API_KEY.strip()
     if not api_key:
         print("Error: ASSEMBLYAI_API_KEY not set in backend/.env")
         print("Get a free key at https://www.assemblyai.com/dashboard")
