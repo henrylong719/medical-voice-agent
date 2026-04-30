@@ -8,7 +8,9 @@ This is an educational engineering prototype. It is not intended to provide medi
 
 This project is a personal follow-up to a related end-to-end Medical Voice Agent project built with a team at the University of Illinois Urbana-Champaign. That earlier version used Vapi AI for the managed voice layer, plus a FastAPI backend, a Next.js staff dashboard, and Supabase/PostgreSQL.
 
-Managed voice AI platforms are useful for shipping quickly, but they can become expensive and restrictive as call volume grows. This repo explores how much of the system can be built directly, including:
+Vapi AI is very useful for quickly building and testing a working voice agent. However, managed voice AI platforms usually charge based on call duration, so the cost can become significant when call volume increases. Because of this, I started this project to explore whether a more custom architecture could reduce cost and provide more control over the voice-agent pipeline.
+
+This repo explores how much of the system can be built directly, including:
 
 - speech-to-text
 - LLM orchestration
