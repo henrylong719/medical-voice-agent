@@ -22,7 +22,7 @@ dependencies = [
     # Phase 6: Voice pipeline
     "websockets>=15.0",
     "pyjwt>=2.12.1",
-    "pwdlib>=0.3.0",
+    "pwdlib[argon2]>=0.3.0",
 ]
 
 [dependency-groups]

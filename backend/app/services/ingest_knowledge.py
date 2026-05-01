@@ -26,7 +26,7 @@ from typing import cast
 
 from postgrest.types import CountMethod
 
-from medical_voice_agent.backend.app.core.config import settings
+from app.core.config import settings
 from app.supabase_client import supabase
 from app.services.knowledge_chunks import KNOWLEDGE_CHUNKS
 from app.services.rag_retriever import embed_texts

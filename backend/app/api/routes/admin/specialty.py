@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from app.supabase_client import supabase
 from app.models.specialty import SpecialtyOut
-from medical_voice_agent.backend.app.api.deps import get_current_user
+from app.api.deps import get_current_user
 
 
 router = APIRouter(

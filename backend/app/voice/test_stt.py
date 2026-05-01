@@ -32,7 +32,7 @@ import wave
 from pathlib import Path
 from typing import AsyncIterator
 
-from medical_voice_agent.backend.app.core.config import settings
+from app.core.config import settings
 from app.voice.stt_client import STTClient, SAMPLE_RATE
 
 

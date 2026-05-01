@@ -22,7 +22,7 @@ from langchain_anthropic import ChatAnthropic
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from pydantic import SecretStr
 
-from medical_voice_agent.backend.app.core.config import settings
+from app.core.config import settings
 from app.agent.graph import invoke_agent
 from app.supabase_client import supabase
 
