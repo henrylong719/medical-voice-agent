@@ -31,8 +31,6 @@ Usage:
 from __future__ import annotations
 
 import asyncio
-from csv import Error
-from ctypes.wintypes import SMALL_RECT
 import json
 import logging
 from dataclasses import dataclass
@@ -184,7 +182,7 @@ class STTClient:
                 return
 
             session_id = begin_data.get("id", "unknown")
-            logger.info("AssenblyAI session started: %s", session_id)
+            logger.info("AssemblyAI session started: %s", session_id)
 
             # ── Start sending audio in the background ──────────
             # We need to send audio AND receive transcripts at the
