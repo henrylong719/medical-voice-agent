@@ -387,7 +387,7 @@ Admin auth is backend-owned. This project does not use Supabase Auth. FastAPI ow
 
 ## Known Gaps
 
-- The README now reflects the live backend, but `backend/README.md` and some planning docs may still describe older phases.
+- Some planning docs may still describe older phases.
 - Some legacy workflow tests still reference removed multi-agent modules such as `app.agent.state` and `app.agent.supervisor`.
 - `tests/test_eval_helpers.py` currently fails from `backend/` because it imports the package through the outer `medical_voice_agent` namespace.
 - The chat API is currently open; only admin resource routes use JWT auth.
