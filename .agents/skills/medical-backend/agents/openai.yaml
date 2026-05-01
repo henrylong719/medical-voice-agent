@@ -1,0 +1,7 @@
+interface:
+  display_name: "Medical Backend"
+  short_description: "Backend workflow and safety guidance"
+  default_prompt: "Use $medical-backend to make a focused backend change in the Medical Voice Agent."
+
+policy:
+  allow_implicit_invocation: true
